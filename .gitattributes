@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.rs text eol=lf
+*.swift text eol=lf
+*.kt text eol=lf
+*.kts text eol=lf
+*.sh text eol=lf
+
+bindings/swift/Sources/easydoge_km_ffi/easydoge_km_ffi.swift linguist-generated=true
+bindings/swift/Sources/easydoge_km_ffiFFI/easydoge_km_ffiFFI.h linguist-generated=true
+bindings/kotlin/easydoge-km/src/main/java/uniffi/easydoge_km_ffi/easydoge_km_ffi.kt linguist-generated=true

@@ -1,0 +1,10 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["EasyDogeKMModule"]
+  },
+  "android": {
+    "modules": ["io.easydoge.km.expo.EasyDogeKMModule"]
+  }
+}
+

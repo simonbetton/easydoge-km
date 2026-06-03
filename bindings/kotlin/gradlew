@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROPS="$DIR/gradle/wrapper/gradle-wrapper.properties"
+DIST_URL="$(sed -n 's/^distributionUrl=//p' "$PROPS" | sed 's#\\:#:#')"
+DIST_NAME="$(basename "$DIST_URL" .zip)"
+DIST_ROOT="${DIST_NAME%-bin}"
+DIST_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/$DIST_NAME"
+GRADLE_BIN="$DIST_DIR/$DIST_ROOT/bin/gradle"
+
+if [[ ! -x "$GRADLE_BIN" ]]; then
+  mkdir -p "$DIST_DIR"
+  ZIP="$DIST_DIR/$DIST_NAME.zip"
+  curl -fsSL "$DIST_URL" -o "$ZIP"
+  unzip -q "$ZIP" -d "$DIST_DIR"
+fi
+
+exec "$GRADLE_BIN" "$@"

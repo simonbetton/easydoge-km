@@ -1,0 +1,33 @@
+[package]
+name = "easydoge-km"
+version = "0.1.0"
+authors.workspace = true
+categories = ["cryptography"]
+description = "Dogecoin key-management SDK for self-custodial wallet products."
+documentation = "https://docs.rs/easydoge-km"
+edition.workspace = true
+homepage.workspace = true
+keywords = ["dogecoin", "wallet", "bip39", "bip32", "keys"]
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+base64.workspace = true
+bip39.workspace = true
+bitcoin.workspace = true
+bs58.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

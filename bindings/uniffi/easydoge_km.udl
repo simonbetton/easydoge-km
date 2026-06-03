@@ -1,0 +1,99 @@
+namespace easydoge_km {
+  enum Network {
+    "mainnet",
+    "testnet",
+    "regtest"
+  };
+
+  enum Language {
+    "english",
+    "simplifiedChinese",
+    "traditionalChinese",
+    "czech",
+    "french",
+    "italian",
+    "japanese",
+    "korean",
+    "portuguese",
+    "spanish"
+  };
+
+  dictionary MnemonicOptions {
+    Language language;
+    u16 word_count;
+  };
+
+  dictionary GeneratedMnemonic {
+    string phrase;
+    Language language;
+    u16 word_count;
+  };
+
+  dictionary Xpriv {
+    Network network;
+    string encoded;
+  };
+
+  dictionary Xpub {
+    Network network;
+    string encoded;
+  };
+
+  dictionary AccountKeySet {
+    Network network;
+    u32 account;
+    string account_path;
+    Xpriv xpriv;
+    Xpub xpub;
+  };
+
+  dictionary PathAddress {
+    Network network;
+    string path;
+    string public_key_hex;
+    string address;
+  };
+
+  dictionary ExtendedKeyInfo {
+    Network network;
+    u8 depth;
+    string parent_fingerprint_hex;
+    u32 child_number;
+    string? public_key_hex;
+    boolean private_key_redacted;
+  };
+
+  dictionary MultisigDescriptor {
+    Network network;
+    u8 threshold;
+    u8 cosigner_count;
+    string child_path;
+    boolean sorted;
+    sequence<string> public_keys_hex;
+    string redeem_script_hex;
+    string p2sh_address;
+  };
+
+  dictionary MessageSignature {
+    Network network;
+    string address;
+    string signature_base64;
+  };
+
+  GeneratedMnemonic generate_mnemonic(MnemonicOptions options);
+  boolean validate_mnemonic(string phrase, Language language);
+  string mnemonic_to_seed_hex(string phrase, string? passphrase, Language language);
+  AccountKeySet account_xpriv_from_mnemonic(string phrase, string? passphrase, Language language, Network network, u32 account);
+  Xpriv derive_path_from_xpriv(Xpriv xpriv, string path);
+  Xpub derive_path_from_xpub(Xpub xpub, string path);
+  PathAddress derive_address_from_xpriv(Xpriv xpriv, string path);
+  PathAddress derive_address_from_xpub(Xpub xpub, string path);
+  ExtendedKeyInfo inspect_xpriv(Xpriv xpriv);
+  ExtendedKeyInfo inspect_xpub(Xpub xpub);
+  string wif_from_xpriv(Xpriv xpriv);
+  boolean validate_address(Network network, string address);
+  MultisigDescriptor create_multisig_descriptor(Network network, u8 threshold, sequence<Xpub> cosigner_xpubs, string child_path, boolean sorted);
+  MessageSignature sign_message(Network network, string wif, string message);
+  boolean verify_message(Network network, string address, string signature_base64, string message);
+};
+

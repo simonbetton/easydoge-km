@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "networks": {
+    "mainnet": {
+      "p2pkh": 30,
+      "p2sh": 22,
+      "wif": 158,
+      "xpub": "02facafd",
+      "xpriv": "02fac398"
+    },
+    "testnet": {
+      "p2pkh": 113,
+      "p2sh": 196,
+      "wif": 241,
+      "xpub": "043587cf",
+      "xpriv": "04358394"
+    },
+    "regtest": {
+      "p2pkh": 111,
+      "p2sh": 196,
+      "wif": 239,
+      "xpub": "043587cf",
+      "xpriv": "04358394"
+    }
+  },
+  "mnemonic": {
+    "language": "english",
+    "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "passphrase": "TREZOR",
+    "bip44_account_path": "m/44'/3'/0'",
+    "receive_path": "m/44'/3'/0'/0/0"
+  }
+}
+
