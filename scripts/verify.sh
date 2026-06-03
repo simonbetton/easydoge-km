@@ -13,7 +13,7 @@ cargo build --workspace --locked
 cargo doc --workspace --no-deps --locked
 ./scripts/generate-bindings.sh
 (cd bindings/swift && swift test)
-npx -y -p typescript@5.9.3 tsc -p bindings/expo/tsconfig.json --noEmit
+npx -y -p typescript@6.0.3 tsc -p bindings/expo/tsconfig.json --noEmit
 
 if [[ -x bindings/kotlin/gradlew ]]; then
   (cd bindings/kotlin && ./gradlew test)
