@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "networks": {
+    "mainnet": {
+      "p2pkh": 30,
+      "p2sh": 22,
+      "wif": 158,
+      "xpub": "02facafd",
+      "xpriv": "02fac398"
+    },
+    "testnet": {
+      "p2pkh": 113,
+      "p2sh": 196,
+      "wif": 241,
+      "xpub": "043587cf",
+      "xpriv": "04358394"
+    },
+    "regtest": {
+      "p2pkh": 111,
+      "p2sh": 196,
+      "wif": 239,
+      "xpub": "043587cf",
+      "xpriv": "04358394"
+    }
+  },
+  "mnemonic": {
+    "language": "english",
+    "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "passphrase": "TREZOR",
+    "bip44_account_path": "m/44'/3'/0'",
+    "receive_path": "m/44'/3'/0'/0/0",
+    "account": {
+      "xpriv": "dgpv58Apt2teSHcczCshu4Y4komJfUqVK8V6a336g1WPWeEKa4DTqeXY7qg1GqdvRU1kSSufZXP148tqq5b7q7PZYgvtwsp2YhxGqxkNgmBSVmB",
+      "xpub": "dgub8s3rDipXzSGxH4XrwJA2sfJu83D89FWordpJq7uNJmHL87LAFR5Jm95er4g4Wa64yvNNY193By1pFiGMixHYZvyZiftVabMqWK7r1m4TSFC",
+      "depth": 3,
+      "child_number": 2147483648,
+      "parent_fingerprint_hex": "783dcdb0",
+      "public_key_hex": "027740a1dfcdd110e02e4c545dbc7b46a96ce39f866d0186507bb6fae8c5e0ebee",
+      "wif": "QS8wWhz1J58Ap7byfcEfGZHsWuTJAsB83XmAZLztEdCzYwbpCkT1",
+      "address": "DF9eh53onfjPVUHabRXPaFcrZqbDBLNgW8"
+    },
+    "receive": {
+      "relative_path": "m/0/0",
+      "public_key_hex": "029c8654f657a5a926900a33b75afc53af2cc6829fb2cc8c5c265b1878771937db",
+      "address": "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM"
+    }
+  },
+  "message": {
+    "text": "EasyDoge KM parity",
+    "signature_base64": "IISdVqfRyPxglPKa91Xj8b7lGTXHFnTJXOY2Evpu6/XqY9M1HkbJ5p2qVH4SwVzRpA9Ss5Eg5Q1AzaByuSwsv3g="
+  },
+  "transaction": {
+    "unsigned_tx_hex": "0100000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000000000ffffffff0100e1f505000000001976a914b68208afee956eedc5cfac4b1998ac0afa6f2ddd88ac00000000",
+    "input_index": 0,
+    "script_pubkey_hex": "76a9146dcc18cfcc4715927568546321b78541c8a83e7388ac",
+    "sighash_type": 1,
+    "signed_tx_hex": "0100000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000000006a473044022006e7d3cd624f468c4be67948d06a16e04ba2718c83b224bc96eccee998f99fda02206077fef79c7c84db56e8027a7d2a01cff30b28d6786775e0408e6ee0555765f80121027740a1dfcdd110e02e4c545dbc7b46a96ce39f866d0186507bb6fae8c5e0ebeeffffffff0100e1f505000000001976a914b68208afee956eedc5cfac4b1998ac0afa6f2ddd88ac00000000"
+  },
+  "multisig": {
+    "threshold": 2,
+    "child_path": "m/0/7",
+    "sorted": true,
+    "cosigner_xpubs": [
+      "dgub8sqPzwjNftFGLYpAr5pQvopHnUpWKoaephYWVZaQDM3KwSdffhQ5M5N6FadVSdRwcxpLHphQvXPFK1gpe3Zq82H9brY8X2cCUtMiqoACscw",
+      "dgub8sMB37QToNJX3qYgYfroe6hwDrxaaPxLodvuaLi6Y66yTY1sEkpszcnhuKHKgqXPZsoHQYnaj2DRASx12U7b9CeRpwqfXjP6f6AiNo4WnFb"
+    ],
+    "public_keys_hex": [
+      "020ad12d843d3ba2803b33dd9f6ad359a58f8009345b82ef2e0ce1a117aa5a4b4d",
+      "026069a838fb2c1f3cc48aff3aa286bc300f6d7ac49bb80ab7ebbe9569327092cd"
+    ],
+    "redeem_script_hex": "5221020ad12d843d3ba2803b33dd9f6ad359a58f8009345b82ef2e0ce1a117aa5a4b4d21026069a838fb2c1f3cc48aff3aa286bc300f6d7ac49bb80ab7ebbe9569327092cd52ae",
+    "p2sh_address": "9t5ovB6U5yDmSTj9zhMXnkVimPAr5UXi3k"
+  }
+}

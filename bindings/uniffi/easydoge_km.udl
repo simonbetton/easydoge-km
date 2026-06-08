@@ -1,0 +1,143 @@
+namespace easydoge_km {
+  enum Network {
+    "mainnet",
+    "testnet",
+    "regtest"
+  };
+
+  enum Language {
+    "english",
+    "simplifiedChinese",
+    "traditionalChinese",
+    "czech",
+    "french",
+    "italian",
+    "japanese",
+    "korean",
+    "portuguese",
+    "spanish"
+  };
+
+  dictionary MnemonicOptions {
+    Language language;
+    u16 word_count;
+  };
+
+  dictionary GeneratedMnemonic {
+    string phrase;
+    Language language;
+    u16 word_count;
+  };
+
+  dictionary Xpriv {
+    Network network;
+    string encoded;
+  };
+
+  dictionary Xpub {
+    Network network;
+    string encoded;
+  };
+
+  dictionary AccountKeySet {
+    Network network;
+    u32 account;
+    string account_path;
+    Xpriv xpriv;
+    Xpub xpub;
+  };
+
+  dictionary PathAddress {
+    Network network;
+    string path;
+    string public_key_hex;
+    string address;
+  };
+
+  dictionary ExtendedKeyInfo {
+    Network network;
+    u8 depth;
+    string parent_fingerprint_hex;
+    u32 child_number;
+    string? public_key_hex;
+    boolean private_key_redacted;
+  };
+
+  dictionary WifInfo {
+    Network network;
+    string public_key_hex;
+    string address;
+    boolean compressed;
+  };
+
+  dictionary MultisigDescriptor {
+    Network network;
+    u8 threshold;
+    u8 cosigner_count;
+    string child_path;
+    boolean sorted;
+    sequence<string> public_keys_hex;
+    string redeem_script_hex;
+    string p2sh_address;
+  };
+
+  dictionary MessageSignature {
+    Network network;
+    string address;
+    string signature_base64;
+  };
+
+  dictionary SignedTransaction {
+    Network network;
+    string signed_tx_hex;
+  };
+
+  enum SigningInputKind {
+    "p2pkh",
+    "p2shMultisig"
+  };
+
+  dictionary SigningEnvelopeInput {
+    u64 input_index;
+    SigningInputKind kind;
+    string script_pubkey_hex;
+    string? redeem_script_hex;
+    u32 sighash_type;
+  };
+
+  dictionary SigningEnvelopeSignature {
+    u64 input_index;
+    string public_key_hex;
+    string signature_hex;
+  };
+
+  dictionary SigningEnvelope {
+    u8 version;
+    Network network;
+    string unsigned_tx_hex;
+    sequence<SigningEnvelopeInput> inputs;
+    sequence<SigningEnvelopeSignature> signatures;
+  };
+
+  GeneratedMnemonic generate_mnemonic(MnemonicOptions options);
+  boolean validate_mnemonic(string phrase, Language language);
+  string mnemonic_to_seed_hex(string phrase, string? passphrase, Language language);
+  AccountKeySet account_xpriv_from_mnemonic(string phrase, string? passphrase, Language language, Network network, u32 account);
+  Xpriv derive_path_from_xpriv(Xpriv xpriv, string path);
+  Xpub derive_path_from_xpub(Xpub xpub, string path);
+  Xpub xpub_from_xpriv(Xpriv xpriv);
+  PathAddress derive_address_from_xpriv(Xpriv xpriv, string path);
+  PathAddress derive_address_from_xpub(Xpub xpub, string path);
+  ExtendedKeyInfo inspect_xpriv(Xpriv xpriv);
+  ExtendedKeyInfo inspect_xpub(Xpub xpub);
+  string wif_from_xpriv(Xpriv xpriv);
+  WifInfo address_from_wif(Network network, string wif);
+  boolean validate_address(Network network, string address);
+  MultisigDescriptor create_multisig_descriptor(Network network, u8 threshold, sequence<Xpub> cosigner_xpubs, string child_path, boolean sorted);
+  MessageSignature sign_message(Network network, string wif, string message);
+  boolean verify_message(Network network, string address, string signature_base64, string message);
+  SignedTransaction sign_p2pkh_transaction(Network network, string unsigned_tx_hex, u64 input_index, string script_pubkey_hex, string wif, u32 sighash_type);
+  SigningEnvelope sign_signing_envelope(SigningEnvelope envelope, string wif);
+  SigningEnvelope combine_signing_envelopes(sequence<SigningEnvelope> envelopes);
+  SignedTransaction finalize_signing_envelope(SigningEnvelope envelope);
+};

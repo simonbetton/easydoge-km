@@ -1,0 +1,25 @@
+[package]
+name = "easydoge-km-ffi"
+version = "0.1.0"
+authors.workspace = true
+categories = ["api-bindings", "cryptography"]
+description = "UniFFI bindings for the EasyDoge Dogecoin key-management SDK."
+documentation = "https://docs.rs/easydoge-km-ffi"
+edition.workspace = true
+homepage.workspace = true
+keywords = ["dogecoin", "uniffi", "swift", "kotlin", "wallet"]
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+easydoge-km = { version = "0.1.0", path = "../easydoge-km" }
+thiserror.workspace = true
+uniffi.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

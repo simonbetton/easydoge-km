@@ -1,0 +1,32 @@
+[package]
+name = "easydoge-km-cli"
+version = "0.1.0"
+authors.workspace = true
+categories = ["command-line-utilities", "cryptography"]
+description = "CLI and Ratatui TUI for the EasyDoge Dogecoin key-management SDK."
+documentation = "https://docs.rs/easydoge-km-cli"
+edition.workspace = true
+homepage.workspace = true
+keywords = ["dogecoin", "cli", "wallet", "keys", "tui"]
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "easydoge-km"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+easydoge-km = { version = "0.1.0", path = "../easydoge-km" }
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
