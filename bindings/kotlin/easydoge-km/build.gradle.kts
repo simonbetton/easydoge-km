@@ -17,7 +17,7 @@ kotlin {
 }
 
 dependencies {
-    implementation("net.java.dev.jna:jna:5.19.0")
+    implementation("net.java.dev.jna:jna:5.19.1")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
 }
