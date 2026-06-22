@@ -1,7 +1,10 @@
 use easydoge_km_ffi::{
-    account_xpriv_from_mnemonic, combine_signing_envelopes, derive_address_from_xpub,
-    finalize_signing_envelope, sign_message, sign_p2pkh_transaction, sign_signing_envelope,
-    Language, Network, SigningEnvelope, SigningEnvelopeInput, SigningInputKind,
+    account_xpriv_from_mnemonic, combine_signing_envelopes, compose_and_sign_transaction,
+    derive_address_from_xpub, finalize_signing_envelope, sign_message, sign_p2pkh_transaction,
+    sign_signing_envelope, ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest,
+    FeePolicy, Language, Network, SigningEnvelope, SigningEnvelopeInput, SigningInputKind,
+    SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind, UtxoSigner,
+    UtxoSignerKind,
 };
 use serde_json::Value;
 
@@ -81,6 +84,9 @@ fn ffi_surface_exposes_signing_and_envelope_flows() {
                 .to_owned(),
             redeem_script_hex: None,
             sighash_type: vectors["transaction"]["sighash_type"].as_u64().unwrap() as u32,
+            previous_output_value_koinu: None,
+            multisig_threshold: None,
+            multisig_public_keys_hex: vec![],
         }],
         signatures: vec![],
     };
@@ -96,4 +102,74 @@ fn ffi_surface_exposes_signing_and_envelope_flows() {
         finalized.signed_tx_hex,
         vectors["transaction"]["signed_tx_hex"].as_str().unwrap()
     );
+}
+
+#[test]
+fn ffi_surface_exposes_compose_and_sign_builder() {
+    let vectors = vectors();
+    let result = compose_and_sign_transaction(ComposeTransactionRequest {
+        network: Network::Mainnet,
+        utxos: vec![SpendableUtxo {
+            txid: "4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
+            vout: 0,
+            previous_output_value_koinu: 100_000_000,
+            script_pubkey_hex: vectors["transaction"]["script_pubkey_hex"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            kind: SigningInputKind::P2pkh,
+            redeem_script_hex: None,
+            multisig_threshold: None,
+            multisig_public_keys_hex: vec![],
+            signers: vec![UtxoSigner {
+                kind: UtxoSignerKind::Wif,
+                wif: Some(
+                    vectors["mnemonic"]["account"]["wif"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                ),
+                xpriv: None,
+                derivation_path: None,
+            }],
+            manually_selected: false,
+        }],
+        outputs: vec![TransactionOutput {
+            kind: TransactionOutputKind::Address,
+            value_koinu: 50_000_000,
+            address: Some(
+                vectors["mnemonic"]["receive"]["address"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            op_return_data_hex: None,
+            script_hex: None,
+        }],
+        fee_policy: FeePolicy {
+            fee_rate_koinu_per_kb: 1_000,
+            dust_threshold_koinu: 1,
+        },
+        coin_selection: CoinSelectionStrategy::MinInputs,
+        change: Some(ChangeDestination {
+            address: Some(
+                vectors["mnemonic"]["receive"]["address"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            xpriv: None,
+            derivation_path: None,
+        }),
+        options: TransactionOptions {
+            version: 1,
+            lock_time: 0,
+            sequence: 0xffff_ffff,
+            sighash_type: 1,
+        },
+    })
+    .unwrap();
+    assert!(result.signed_tx_hex.is_some());
+    assert!(result.signing_envelope.is_none());
+    assert_eq!(result.selected_inputs.len(), 1);
 }

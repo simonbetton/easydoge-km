@@ -103,6 +103,9 @@ namespace easydoge_km {
     string script_pubkey_hex;
     string? redeem_script_hex;
     u32 sighash_type;
+    u64? previous_output_value_koinu;
+    u8? multisig_threshold;
+    sequence<string> multisig_public_keys_hex;
   };
 
   dictionary SigningEnvelopeSignature {
@@ -117,6 +120,113 @@ namespace easydoge_km {
     string unsigned_tx_hex;
     sequence<SigningEnvelopeInput> inputs;
     sequence<SigningEnvelopeSignature> signatures;
+  };
+
+  enum UtxoSignerKind {
+    "wif",
+    "xprivDerivation"
+  };
+
+  dictionary UtxoSigner {
+    UtxoSignerKind kind;
+    string? wif;
+    Xpriv? xpriv;
+    string? derivation_path;
+  };
+
+  dictionary SpendableUtxo {
+    string txid;
+    u32 vout;
+    u64 previous_output_value_koinu;
+    string script_pubkey_hex;
+    SigningInputKind kind;
+    string? redeem_script_hex;
+    u8? multisig_threshold;
+    sequence<string> multisig_public_keys_hex;
+    sequence<UtxoSigner> signers;
+    boolean manually_selected;
+  };
+
+  enum TransactionOutputKind {
+    "address",
+    "opReturn",
+    "expertRawScript"
+  };
+
+  dictionary TransactionOutput {
+    TransactionOutputKind kind;
+    u64 value_koinu;
+    string? address;
+    string? op_return_data_hex;
+    string? script_hex;
+  };
+
+  dictionary FeePolicy {
+    u64 fee_rate_koinu_per_kb;
+    u64 dust_threshold_koinu;
+  };
+
+  enum CoinSelectionStrategy {
+    "minInputs",
+    "smallestFirst",
+    "largestFirst",
+    "manualSelectedInputs"
+  };
+
+  dictionary ChangeDestination {
+    string? address;
+    Xpriv? xpriv;
+    string? derivation_path;
+  };
+
+  dictionary TransactionOptions {
+    i32 version;
+    u32 lock_time;
+    u32 sequence;
+    u32 sighash_type;
+  };
+
+  dictionary ComposeTransactionRequest {
+    Network network;
+    sequence<SpendableUtxo> utxos;
+    sequence<TransactionOutput> outputs;
+    FeePolicy fee_policy;
+    CoinSelectionStrategy coin_selection;
+    ChangeDestination? change;
+    TransactionOptions options;
+  };
+
+  dictionary AuditedInput {
+    string txid;
+    u32 vout;
+    u64 previous_output_value_koinu;
+    string script_pubkey_hex;
+    SigningInputKind kind;
+  };
+
+  dictionary SkippedInput {
+    string txid;
+    u32 vout;
+    u64 previous_output_value_koinu;
+    string reason;
+  };
+
+  dictionary ComposeTransactionResult {
+    Network network;
+    sequence<AuditedInput> selected_inputs;
+    sequence<SkippedInput> skipped_inputs;
+    u64 input_total_koinu;
+    u64 spend_output_total_koinu;
+    u64 change_amount_koinu;
+    string? change_address;
+    string? change_script_pubkey_hex;
+    u64 fee_koinu;
+    u64 estimated_size_bytes;
+    u64? actual_size_bytes;
+    boolean dust_change_folded_into_fee;
+    string unsigned_tx_hex;
+    string? signed_tx_hex;
+    SigningEnvelope? signing_envelope;
   };
 
   GeneratedMnemonic generate_mnemonic(MnemonicOptions options);
@@ -140,4 +250,5 @@ namespace easydoge_km {
   SigningEnvelope sign_signing_envelope(SigningEnvelope envelope, string wif);
   SigningEnvelope combine_signing_envelopes(sequence<SigningEnvelope> envelopes);
   SignedTransaction finalize_signing_envelope(SigningEnvelope envelope);
+  ComposeTransactionResult compose_and_sign_transaction(ComposeTransactionRequest request);
 };

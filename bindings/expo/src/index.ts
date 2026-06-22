@@ -93,6 +93,9 @@ export interface SigningEnvelopeInput {
   scriptPubkeyHex: string;
   redeemScriptHex?: string | null;
   sighashType: number;
+  previousOutputValueKoinu?: number | null;
+  multisigThreshold?: number | null;
+  multisigPublicKeysHex: string[];
 }
 
 export interface SigningEnvelopeSignature {
@@ -107,6 +110,105 @@ export interface SigningEnvelope {
   unsignedTxHex: string;
   inputs: SigningEnvelopeInput[];
   signatures: SigningEnvelopeSignature[];
+}
+
+export type UtxoSignerKind = "wif" | "xpriv-derivation";
+
+export interface UtxoSigner {
+  kind: UtxoSignerKind;
+  wif?: string | null;
+  xpriv?: Xpriv | null;
+  derivationPath?: string | null;
+}
+
+export interface SpendableUtxo {
+  txid: string;
+  vout: number;
+  previousOutputValueKoinu: number;
+  scriptPubkeyHex: string;
+  kind: SigningInputKind;
+  redeemScriptHex?: string | null;
+  multisigThreshold?: number | null;
+  multisigPublicKeysHex: string[];
+  signers: UtxoSigner[];
+  manuallySelected: boolean;
+}
+
+export type TransactionOutputKind = "address" | "op-return" | "expert-raw-script";
+
+export interface TransactionOutput {
+  kind: TransactionOutputKind;
+  valueKoinu: number;
+  address?: string | null;
+  opReturnDataHex?: string | null;
+  scriptHex?: string | null;
+}
+
+export interface FeePolicy {
+  feeRateKoinuPerKb: number;
+  dustThresholdKoinu: number;
+}
+
+export type CoinSelectionStrategy =
+  | "min-inputs"
+  | "smallest-first"
+  | "largest-first"
+  | "manual-selected-inputs";
+
+export interface ChangeDestination {
+  address?: string | null;
+  xpriv?: Xpriv | null;
+  derivationPath?: string | null;
+}
+
+export interface TransactionOptions {
+  version: number;
+  lockTime: number;
+  sequence: number;
+  sighashType: number;
+}
+
+export interface ComposeTransactionRequest {
+  network: Network;
+  utxos: SpendableUtxo[];
+  outputs: TransactionOutput[];
+  feePolicy: FeePolicy;
+  coinSelection: CoinSelectionStrategy;
+  change?: ChangeDestination | null;
+  options: TransactionOptions;
+}
+
+export interface AuditedInput {
+  txid: string;
+  vout: number;
+  previousOutputValueKoinu: number;
+  scriptPubkeyHex: string;
+  kind: SigningInputKind;
+}
+
+export interface SkippedInput {
+  txid: string;
+  vout: number;
+  previousOutputValueKoinu: number;
+  reason: string;
+}
+
+export interface ComposeTransactionResult {
+  network: Network;
+  selectedInputs: AuditedInput[];
+  skippedInputs: SkippedInput[];
+  inputTotalKoinu: number;
+  spendOutputTotalKoinu: number;
+  changeAmountKoinu: number;
+  changeAddress?: string | null;
+  changeScriptPubkeyHex?: string | null;
+  feeKoinu: number;
+  estimatedSizeBytes: number;
+  actualSizeBytes?: number | null;
+  dustChangeFoldedIntoFee: boolean;
+  unsignedTxHex: string;
+  signedTxHex?: string | null;
+  signingEnvelope?: SigningEnvelope | null;
 }
 
 export interface StoredWalletHandle {
@@ -162,6 +264,7 @@ export interface EasyDogeKMModule {
   signSigningEnvelope(envelope: SigningEnvelope, wif: string): Promise<SigningEnvelope>;
   combineSigningEnvelopes(envelopes: SigningEnvelope[]): Promise<SigningEnvelope>;
   finalizeSigningEnvelope(envelope: SigningEnvelope): Promise<SignedTransaction>;
+  composeAndSignTransaction(request: ComposeTransactionRequest): Promise<ComposeTransactionResult>;
   storeMnemonic(phrase: string, protection: StoredWalletProtection): Promise<StoredWalletHandle>;
   exportMnemonic(handle: StoredWalletHandle, protection: StoredWalletProtection): Promise<string>;
   protectionLevel(handle: StoredWalletHandle): Promise<StorageProtectionLevel>;

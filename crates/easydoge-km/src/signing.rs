@@ -26,6 +26,12 @@ pub struct SigningEnvelopeInput {
     pub script_pubkey_hex: String,
     pub redeem_script_hex: Option<String>,
     pub sighash_type: u32,
+    #[serde(default)]
+    pub previous_output_value_koinu: Option<u64>,
+    #[serde(default)]
+    pub multisig_threshold: Option<u8>,
+    #[serde(default)]
+    pub multisig_public_keys_hex: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +72,9 @@ pub fn sign_p2pkh_transaction(
             script_pubkey_hex: script_pubkey_hex.to_owned(),
             redeem_script_hex: None,
             sighash_type,
+            previous_output_value_koinu: None,
+            multisig_threshold: None,
+            multisig_public_keys_hex: vec![],
         }],
         signatures: vec![],
     };
@@ -169,8 +178,35 @@ pub fn finalize_signing_envelope(envelope: &SigningEnvelope) -> Result<SignedTra
                         "P2SH multisig input requires redeem script".to_owned(),
                     )
                 })?;
+                let metadata = multisig_metadata(input, redeem_script)?;
+                let mut matching = matching
+                    .into_iter()
+                    .filter(|signature| {
+                        metadata.public_keys_hex.iter().any(|public_key| {
+                            public_key.eq_ignore_ascii_case(&signature.public_key_hex)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                matching.sort_by_key(|signature| {
+                    metadata
+                        .public_keys_hex
+                        .iter()
+                        .position(|public_key| {
+                            public_key.eq_ignore_ascii_case(&signature.public_key_hex)
+                        })
+                        .unwrap_or(usize::MAX)
+                });
+                matching.dedup_by(|left, right| left.public_key_hex == right.public_key_hex);
+                if matching.len() < usize::from(metadata.threshold) {
+                    return Err(Error::InvalidTransaction(format!(
+                        "input {} has {} valid multisig signatures, threshold is {}",
+                        input.input_index,
+                        matching.len(),
+                        metadata.threshold
+                    )));
+                }
                 let mut builder = Builder::new().push_int(0);
-                for signature in matching {
+                for signature in matching.into_iter().take(usize::from(metadata.threshold)) {
                     builder = builder.push_slice(push_bytes(
                         hex::decode(&signature.signature_hex).map_err(|err| {
                             Error::Serialization(format!("invalid signature hex: {err}"))
@@ -209,4 +245,107 @@ fn parse_script(hex_value: &str) -> Result<bitcoin::ScriptBuf> {
 
 fn push_bytes(bytes: Vec<u8>) -> Result<PushBytesBuf> {
     PushBytesBuf::try_from(bytes).map_err(|err| Error::Serialization(err.to_string()))
+}
+
+struct MultisigMetadata {
+    threshold: u8,
+    public_keys_hex: Vec<String>,
+}
+
+fn multisig_metadata(
+    input: &SigningEnvelopeInput,
+    redeem_script_hex: &str,
+) -> Result<MultisigMetadata> {
+    let parsed = parse_multisig_redeem_script(redeem_script_hex)?;
+    if let Some(threshold) = input.multisig_threshold {
+        if threshold != parsed.threshold {
+            return Err(Error::InvalidTransaction(
+                "multisig threshold metadata does not match redeem script".to_owned(),
+            ));
+        }
+    }
+    if !input.multisig_public_keys_hex.is_empty()
+        && (input.multisig_public_keys_hex.len() != parsed.public_keys_hex.len()
+            || !input.multisig_public_keys_hex.iter().all(|key| {
+                parsed
+                    .public_keys_hex
+                    .iter()
+                    .any(|parsed_key| parsed_key.eq_ignore_ascii_case(key))
+            }))
+    {
+        return Err(Error::InvalidTransaction(
+            "multisig public key metadata does not match redeem script".to_owned(),
+        ));
+    }
+    Ok(MultisigMetadata {
+        threshold: input.multisig_threshold.unwrap_or(parsed.threshold),
+        public_keys_hex: if input.multisig_public_keys_hex.is_empty() {
+            parsed.public_keys_hex
+        } else {
+            input.multisig_public_keys_hex.clone()
+        },
+    })
+}
+
+fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
+    let bytes = hex::decode(redeem_script_hex)
+        .map_err(|err| Error::Serialization(format!("invalid redeem script hex: {err}")))?;
+    if bytes.len() < 3 {
+        return Err(Error::InvalidTransaction(
+            "invalid multisig redeem script".to_owned(),
+        ));
+    }
+    let threshold = decode_pushnum(bytes[0])
+        .ok_or_else(|| Error::InvalidTransaction("invalid multisig threshold opcode".to_owned()))?;
+    let mut index = 1;
+    let mut public_keys_hex = Vec::new();
+    while index < bytes.len() {
+        if (0x51..=0x60).contains(&bytes[index]) {
+            break;
+        }
+        let push_len = usize::from(bytes[index]);
+        index += 1;
+        if push_len != 33 || index + push_len > bytes.len() {
+            return Err(Error::InvalidTransaction(
+                "invalid multisig public key push".to_owned(),
+            ));
+        }
+        public_keys_hex.push(hex::encode(&bytes[index..index + push_len]));
+        index += push_len;
+    }
+    if index + 2 != bytes.len() {
+        return Err(Error::InvalidTransaction(
+            "invalid multisig redeem script length".to_owned(),
+        ));
+    }
+    let cosigner_count = decode_pushnum(bytes[index]).ok_or_else(|| {
+        Error::InvalidTransaction("invalid multisig cosigner count opcode".to_owned())
+    })?;
+    if usize::from(cosigner_count) != public_keys_hex.len() {
+        return Err(Error::InvalidTransaction(
+            "multisig public key count does not match redeem script".to_owned(),
+        ));
+    }
+    if bytes[index + 1] != 0xae {
+        return Err(Error::InvalidTransaction(
+            "multisig redeem script must end with OP_CHECKMULTISIG".to_owned(),
+        ));
+    }
+    if threshold == 0 || threshold > cosigner_count {
+        return Err(Error::InvalidTransaction(
+            "invalid multisig threshold".to_owned(),
+        ));
+    }
+    Ok(MultisigMetadata {
+        threshold,
+        public_keys_hex,
+    })
+}
+
+fn decode_pushnum(opcode: u8) -> Option<u8> {
+    if (0x51..=0x60).contains(&opcode) {
+        Some(opcode - 0x50)
+    } else {
+        None
+    }
 }

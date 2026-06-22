@@ -32,6 +32,46 @@ Address derivation from public extended key material without access to private k
 
 A portable representation of an unsigned transaction, input metadata, redeem scripts, and collected signatures.
 
+## Compose-and-Sign Transaction Builder
+
+An offline transaction workflow that turns known spendable outputs, intended outputs, fee policy, and signer material into an unsigned transaction, a completed signed transaction, or a portable signing envelope.
+
+## UTXO
+
+An unspent transaction output that can be selected as an input to a future transaction.
+
+## Koinu
+
+The smallest Dogecoin amount unit.
+
+## Script Pubkey
+
+The locking script on an output that defines the conditions required to spend it.
+
+## Redeem Script
+
+The script revealed when spending a P2SH output.
+
+## P2PKH
+
+A pay-to-public-key-hash output spendable by a signature from the matching private key.
+
+## P2SH Multisig
+
+A pay-to-script-hash output whose redeem script requires signatures from a threshold of expected public keys.
+
+## OP_RETURN
+
+A zero-value data output that is provably unspendable.
+
+## Dust
+
+An output amount below the policy threshold for creating a spendable transaction output.
+
+## Coin Selection
+
+The choice of which UTXOs fund a transaction.
+
 ## Stored Wallet Handle
 
 An opaque reference to wallet secret material managed by a platform storage adapter.

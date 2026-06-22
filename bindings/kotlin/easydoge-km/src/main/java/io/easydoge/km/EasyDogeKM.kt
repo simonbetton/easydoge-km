@@ -1,6 +1,8 @@
 package io.easydoge.km
 
 import uniffi.easydoge_km_ffi.AccountKeySet
+import uniffi.easydoge_km_ffi.ComposeTransactionRequest
+import uniffi.easydoge_km_ffi.ComposeTransactionResult
 import uniffi.easydoge_km_ffi.ExtendedKeyInfo
 import uniffi.easydoge_km_ffi.GeneratedMnemonic
 import uniffi.easydoge_km_ffi.Language
@@ -154,4 +156,7 @@ class EasyDogeKM {
 
     fun finalizeSigningEnvelope(envelope: SigningEnvelope): SignedTransaction =
         uniffi.easydoge_km_ffi.finalizeSigningEnvelope(envelope)
+
+    fun composeAndSignTransaction(request: ComposeTransactionRequest): ComposeTransactionResult =
+        uniffi.easydoge_km_ffi.composeAndSignTransaction(request)
 }

@@ -61,7 +61,10 @@ import Testing
                 kind: .p2pkh,
                 scriptPubkeyHex: string(transaction, "script_pubkey_hex"),
                 redeemScriptHex: nil,
-                sighashType: UInt32(int(transaction, "sighash_type"))
+                sighashType: UInt32(int(transaction, "sighash_type")),
+                previousOutputValueKoinu: nil,
+                multisigThreshold: nil,
+                multisigPublicKeysHex: []
             )
         ],
         signatures: []
