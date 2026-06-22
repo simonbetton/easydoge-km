@@ -279,11 +279,7 @@ fn multisig_metadata(
     }
     Ok(MultisigMetadata {
         threshold: input.multisig_threshold.unwrap_or(parsed.threshold),
-        public_keys_hex: if input.multisig_public_keys_hex.is_empty() {
-            parsed.public_keys_hex
-        } else {
-            input.multisig_public_keys_hex.clone()
-        },
+        public_keys_hex: parsed.public_keys_hex,
     })
 }
 

@@ -789,7 +789,7 @@ fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
                 })?)?
                 .len();
             1 + threshold * (1 + MAX_SIGNATURE_PUSH_BYTES)
-                + varint_len(redeem_script_len)
+                + script_push_prefix_len(redeem_script_len)
                 + redeem_script_len
         }
     };
@@ -923,6 +923,15 @@ fn varint_len(value: usize) -> usize {
         0xfd..=0xffff => 3,
         0x1_0000..=0xffff_ffff => 5,
         _ => 9,
+    }
+}
+
+fn script_push_prefix_len(value: usize) -> usize {
+    match value {
+        0..=0x4b => 1,
+        0x4c..=0xff => 2,
+        0x100..=0xffff => 3,
+        _ => 5,
     }
 }
 

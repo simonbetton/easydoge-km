@@ -1,3 +1,4 @@
+use bitcoin::hashes::{hash160, Hash};
 use easydoge_km::{
     account_xpriv_from_mnemonic, compose_and_sign_transaction, create_multisig_descriptor,
     derive_address_from_xpriv, derive_address_from_xpub, finalize_signing_envelope, inspect_xpriv,
@@ -317,6 +318,102 @@ fn p2sh_multisig_finalize_requires_threshold_signatures() {
     };
     let error = finalize_signing_envelope(&envelope).unwrap_err();
     assert!(error.to_string().contains("threshold is 2"));
+}
+
+#[test]
+fn p2sh_multisig_finalize_uses_redeem_script_public_key_order() {
+    let vectors = vectors();
+    let public_keys = vectors["multisig"]["public_keys_hex"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let mut reversed_public_keys = public_keys.clone();
+    reversed_public_keys.reverse();
+    let redeem_script_hex = vectors["multisig"]["redeem_script_hex"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let envelope = SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: vectors["transaction"]["unsigned_tx_hex"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        inputs: vec![SigningEnvelopeInput {
+            input_index: 0,
+            kind: SigningInputKind::P2shMultisig,
+            script_pubkey_hex: "a914000000000000000000000000000000000000000087".to_owned(),
+            redeem_script_hex: Some(redeem_script_hex.clone()),
+            sighash_type: 1,
+            previous_output_value_koinu: Some(100_000_000),
+            multisig_threshold: Some(2),
+            multisig_public_keys_hex: reversed_public_keys,
+        }],
+        signatures: vec![
+            SigningEnvelopeSignature {
+                input_index: 0,
+                public_key_hex: public_keys[1].clone(),
+                signature_hex: "bb".to_owned(),
+            },
+            SigningEnvelopeSignature {
+                input_index: 0,
+                public_key_hex: public_keys[0].clone(),
+                signature_hex: "aa".to_owned(),
+            },
+        ],
+    };
+
+    let signed = finalize_signing_envelope(&envelope).unwrap();
+
+    assert!(signed
+        .signed_tx_hex
+        .contains(&format!("4d0001aa01bb47{redeem_script_hex}")));
+}
+
+#[test]
+fn compose_builder_counts_pushdata_prefix_for_large_p2sh_redeem_script() {
+    let mut request = compose_request_base(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        9_343,
+    );
+    let public_keys = [
+        "020000000000000000000000000000000000000000000000000000000000000001",
+        "030000000000000000000000000000000000000000000000000000000000000002",
+        "020000000000000000000000000000000000000000000000000000000000000003",
+    ];
+    let redeem_script_hex = format!(
+        "52{}53ae",
+        public_keys
+            .iter()
+            .map(|public_key| format!("21{public_key}"))
+            .collect::<String>()
+    );
+    let redeem_script = hex::decode(&redeem_script_hex).unwrap();
+    let script_hash = hash160::Hash::hash(&redeem_script);
+    request.utxos[0] = SpendableUtxo {
+        txid: "4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
+        vout: 0,
+        previous_output_value_koinu: 9_343,
+        script_pubkey_hex: format!("a914{}87", hex::encode(script_hash)),
+        kind: SigningInputKind::P2shMultisig,
+        redeem_script_hex: Some(redeem_script_hex),
+        multisig_threshold: Some(2),
+        multisig_public_keys_hex: public_keys.iter().map(|key| (*key).to_owned()).collect(),
+        signers: vec![],
+        manually_selected: false,
+    };
+    request.change = None;
+    request.outputs[0].value_koinu = 9_000;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(result.estimated_size_bytes, 343);
+    assert_eq!(result.fee_koinu, 343);
+    assert!(result.signed_tx_hex.is_none());
+    assert!(result.signing_envelope.is_some());
 }
 
 fn compose_request_base(txid: &str, previous_output_value_koinu: u64) -> ComposeTransactionRequest {
