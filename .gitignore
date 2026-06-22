@@ -3,10 +3,12 @@
 /coverage/
 /tmp/
 /vendor/
+node_modules
 /bindings/expo/build/
 /bindings/expo/node_modules/
 /bindings/expo/package-lock.json
 /bindings/generated/
+/tools/bitcoinjs-cross-check/node_modules/
 /bindings/kotlin/.gradle/
 /bindings/kotlin/**/build/
 /bindings/swift/.build/

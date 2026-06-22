@@ -8,6 +8,7 @@ bash scripts/check-open-source-ready.sh
 bash -n scripts/*.sh
 cargo fmt --all --check
 cargo test --workspace --locked
+bash scripts/cross-check.sh
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace --locked
 cargo doc --workspace --no-deps --locked

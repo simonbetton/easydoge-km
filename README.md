@@ -13,6 +13,7 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 - `docs/`: API, CLI/TUI, security model, release, and architecture documentation.
 - `scripts/`: Verification, binding generation, and release artifact helpers.
 - `test-vectors/`: Shared parity vectors consumed by every public surface.
+- `tools/bitcoinjs-cross-check`: Independent bitcoinjs-based cross-check runner.
 
 ## Features
 
@@ -30,7 +31,7 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 - Rust stable from `rust-toolchain.toml`
 - Swift 6 or newer for Swift package verification
 - JDK 17 for Android/Kotlin verification
-- Node.js 20 or newer for Expo TypeScript verification
+- Node.js 20 or newer and pnpm for Expo TypeScript and cross-check verification
 - Xcode for Apple release artifacts
 - Android SDK and `cargo-ndk` for Android native release artifacts
 
@@ -91,6 +92,7 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [SECURITY.md](SECURITY.
 - Shell syntax checks
 - `cargo fmt --all --check`
 - Rust workspace tests
+- BitcoinJS cross-checks for Dogecoin BIP39/BIP32/BIP44, address, WIF, message signing, transaction signing, and multisig behavior
 - Clippy with warnings denied
 - Rust workspace build
 - Rust docs build
