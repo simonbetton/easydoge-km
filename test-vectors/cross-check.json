@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "mnemonics": [
+    {
+      "id": "abandon-trezor",
+      "language": "english",
+      "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      "passphrase": "TREZOR"
+    },
+    {
+      "id": "legal-empty",
+      "language": "english",
+      "phrase": "legal winner thank year wave sausage worth useful legal winner thank yellow",
+      "passphrase": ""
+    }
+  ],
+  "bip44_cases": [
+    {
+      "id": "mainnet-account-0",
+      "mnemonic_id": "abandon-trezor",
+      "network": "mainnet",
+      "account": 0,
+      "child_paths": ["m/0/0", "m/0/1", "m/1/0"],
+      "hardened_public_path": "m/0'/0"
+    },
+    {
+      "id": "mainnet-account-1",
+      "mnemonic_id": "abandon-trezor",
+      "network": "mainnet",
+      "account": 1,
+      "child_paths": ["m/0/0", "m/1/0"],
+      "hardened_public_path": "m/1'/0"
+    },
+    {
+      "id": "testnet-account-0",
+      "mnemonic_id": "legal-empty",
+      "network": "testnet",
+      "account": 0,
+      "child_paths": ["m/0/0", "m/1/0"],
+      "hardened_public_path": "m/0/0'"
+    },
+    {
+      "id": "regtest-account-0",
+      "mnemonic_id": "legal-empty",
+      "network": "regtest",
+      "account": 0,
+      "child_paths": ["m/0/0", "m/0/2", "m/1/0"],
+      "hardened_public_path": "m/0'/0"
+    }
+  ],
+  "message_cases": [
+    {
+      "id": "mainnet-message-child-0",
+      "bip44_case_id": "mainnet-account-0",
+      "signer_path": "m/0/0",
+      "message": "EasyDoge KM cross-check"
+    },
+    {
+      "id": "testnet-message-change-0",
+      "bip44_case_id": "testnet-account-0",
+      "signer_path": "m/1/0",
+      "message": "Dogecoin message signing reference"
+    }
+  ],
+  "transaction_cases": [
+    {
+      "id": "mainnet-p2pkh-child-0",
+      "bip44_case_id": "mainnet-account-0",
+      "signer_path": "m/0/0",
+      "unsigned_tx_hex": "0100000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000000000ffffffff0100e1f505000000001976a914b68208afee956eedc5cfac4b1998ac0afa6f2ddd88ac00000000",
+      "input_index": 0,
+      "sighash_type": 1
+    },
+    {
+      "id": "testnet-p2pkh-change-0",
+      "bip44_case_id": "testnet-account-0",
+      "signer_path": "m/1/0",
+      "unsigned_tx_hex": "0100000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000ffffffff0180969800000000001976a914111111111111111111111111111111111111111188ac00000000",
+      "input_index": 0,
+      "sighash_type": 1
+    }
+  ],
+  "multisig_cases": [
+    {
+      "id": "mainnet-2-of-2-sorted",
+      "network": "mainnet",
+      "threshold": 2,
+      "cosigner_bip44_case_ids": ["mainnet-account-0", "mainnet-account-1"],
+      "child_path": "m/0/7",
+      "sorted": true
+    },
+    {
+      "id": "mainnet-2-of-2-unsorted",
+      "network": "mainnet",
+      "threshold": 2,
+      "cosigner_bip44_case_ids": ["mainnet-account-1", "mainnet-account-0"],
+      "child_path": "m/1/3",
+      "sorted": false
+    }
+  ]
+}

@@ -52,6 +52,28 @@ m/1/0
 
 Public derivation rejects hardened path components because hardened public derivation is not possible.
 
+## Cross-Check Vectors
+
+`test-vectors/parity.json` remains the public parity fixture consumed by Rust, Swift, Kotlin, Expo, and CLI tests.
+
+`test-vectors/cross-check.json` is an input-only fixture for independent implementation checks. The Rust example emitter and the bitcoinjs runner both read the same mnemonic, network, account, child-path, signing, transaction, and multisig cases, compute Dogecoin outputs independently, and compare canonical JSON output. The harness covers:
+
+- BIP39 seed derivation
+- Dogecoin BIP44 account xpriv/xpub derivation
+- Non-hardened child xpriv/xpub derivation
+- P2PKH address derivation from private and public child keys
+- WIF export/import round trips
+- Hardened xpub derivation rejection
+- Dogecoin message signing and verification
+- Legacy P2PKH transaction signing
+- P2SH multisig redeem scripts and addresses
+
+Run it directly with:
+
+```sh
+bash scripts/cross-check.sh
+```
+
 ## Non-Reversible Seed Boundary
 
 The SDK can derive xprivs and xpubs from a BIP39 mnemonic and optional passphrase. It cannot recover the original BIP39 mnemonic or BIP39 seed from an xpriv. This is a cryptographic boundary, not a missing feature.
