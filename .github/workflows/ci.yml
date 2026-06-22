@@ -45,6 +45,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install CI tools
+        run: |
+          brew install ripgrep
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
       - name: Fetch dependencies
         run: cargo fetch --locked
 
