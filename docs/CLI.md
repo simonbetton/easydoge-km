@@ -2,10 +2,16 @@
 
 The `easydoge-km` binary in `crates/easydoge-km-cli` is an engineer-facing surface for exploring the Rust SDK from the terminal. It is not a production wallet and does not enforce a setup wizard or custodial storage.
 
-Run from the workspace root:
+Install from the workspace root:
 
 ```sh
-cargo run -p easydoge-km-cli -- <command>
+cargo install --path crates/easydoge-km-cli --force
+```
+
+Then run commands directly:
+
+```sh
+easydoge-km <command>
 ```
 
 Global flags:
@@ -27,7 +33,7 @@ Typical flow:
 
 `address derive` accepts `--xpub` or `--xpriv` plus a relative path (for example `m/0/0` for incoming, `m/1/0` for outgoing/change). It does not take a mnemonic directly.
 
-Subcommands cover mnemonic handling, account and path derivation, WIF import/export, address validation, message signing, P2PKH transaction signing, multisig envelopes, and more. See `cargo run -p easydoge-km-cli -- --help`.
+Subcommands cover mnemonic handling, account and path derivation, WIF import/export, address validation, message signing, P2PKH transaction signing, multisig envelopes, and more. See `easydoge-km --help`.
 
 ### Parity test vector
 
@@ -41,7 +47,7 @@ Examples and the TUI sample mode use the shared vector in [test-vectors/parity.j
 Example:
 
 ```sh
-cargo run -p easydoge-km-cli -- xpriv from-mnemonic \
+easydoge-km xpriv from-mnemonic \
   --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
   --passphrase TREZOR \
   --network mainnet \
@@ -54,7 +60,7 @@ cargo run -p easydoge-km-cli -- xpriv from-mnemonic \
 Launch:
 
 ```sh
-cargo run -p easydoge-km-cli -- tui
+easydoge-km tui
 ```
 
 Press `q` or `Esc` to quit.

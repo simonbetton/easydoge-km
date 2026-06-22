@@ -43,22 +43,28 @@ Run the full verification suite:
 ./scripts/verify.sh
 ```
 
+Install the CLI from the workspace root:
+
+```sh
+cargo install --path crates/easydoge-km-cli --force
+```
+
 Generate a mnemonic without revealing the phrase:
 
 ```sh
-cargo run -p easydoge-km-cli -- mnemonic generate
+easydoge-km mnemonic generate
 ```
 
 Launch the TUI:
 
 ```sh
-cargo run -p easydoge-km-cli -- tui
+easydoge-km tui
 ```
 
 Derive an account key set from a known test mnemonic:
 
 ```sh
-cargo run -p easydoge-km-cli -- xpriv from-mnemonic \
+easydoge-km xpriv from-mnemonic \
   --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
   --passphrase TREZOR \
   --network mainnet \

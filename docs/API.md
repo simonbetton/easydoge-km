@@ -85,19 +85,19 @@ APIs that start from an xpriv can derive child private keys, xpubs, WIFs, addres
 Generate a mnemonic without printing the phrase:
 
 ```sh
-cargo run -p easydoge-km-cli -- mnemonic generate
+easydoge-km mnemonic generate
 ```
 
 Reveal a generated mnemonic explicitly:
 
 ```sh
-cargo run -p easydoge-km-cli -- mnemonic generate --reveal
+easydoge-km mnemonic generate --reveal
 ```
 
 Derive an account key set:
 
 ```sh
-cargo run -p easydoge-km-cli -- xpriv from-mnemonic \
+easydoge-km xpriv from-mnemonic \
   --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
   --passphrase TREZOR \
   --network mainnet \
@@ -108,7 +108,7 @@ cargo run -p easydoge-km-cli -- xpriv from-mnemonic \
 Launch the TUI:
 
 ```sh
-cargo run -p easydoge-km-cli -- tui
+easydoge-km tui
 ```
 
 See [CLI.md](CLI.md) for TUI behavior (sample vs generated mnemonic, keybindings, and derivation source).
