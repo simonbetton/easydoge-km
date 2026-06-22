@@ -128,6 +128,9 @@ pub struct SigningEnvelopeInput {
     pub script_pubkey_hex: String,
     pub redeem_script_hex: Option<String>,
     pub sighash_type: u32,
+    pub previous_output_value_koinu: Option<u64>,
+    pub multisig_threshold: Option<u8>,
+    pub multisig_public_keys_hex: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -141,6 +144,126 @@ pub struct SigningEnvelopeSignature {
     pub input_index: u64,
     pub public_key_hex: String,
     pub signature_hex: String,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct ComposeTransactionRequest {
+    pub network: Network,
+    pub utxos: Vec<SpendableUtxo>,
+    pub outputs: Vec<TransactionOutput>,
+    pub fee_policy: FeePolicy,
+    pub coin_selection: CoinSelectionStrategy,
+    pub change: Option<ChangeDestination>,
+    pub options: TransactionOptions,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SpendableUtxo {
+    pub txid: String,
+    pub vout: u32,
+    pub previous_output_value_koinu: u64,
+    pub script_pubkey_hex: String,
+    pub kind: SigningInputKind,
+    pub redeem_script_hex: Option<String>,
+    pub multisig_threshold: Option<u8>,
+    pub multisig_public_keys_hex: Vec<String>,
+    pub signers: Vec<UtxoSigner>,
+    pub manually_selected: bool,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct UtxoSigner {
+    pub kind: UtxoSignerKind,
+    pub wif: Option<String>,
+    pub xpriv: Option<Xpriv>,
+    pub derivation_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum UtxoSignerKind {
+    Wif,
+    XprivDerivation,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TransactionOutput {
+    pub kind: TransactionOutputKind,
+    pub value_koinu: u64,
+    pub address: Option<String>,
+    pub op_return_data_hex: Option<String>,
+    pub script_hex: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum TransactionOutputKind {
+    Address,
+    OpReturn,
+    ExpertRawScript,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FeePolicy {
+    pub fee_rate_koinu_per_kb: u64,
+    pub dust_threshold_koinu: u64,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum CoinSelectionStrategy {
+    MinInputs,
+    SmallestFirst,
+    LargestFirst,
+    ManualSelectedInputs,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct ChangeDestination {
+    pub address: Option<String>,
+    pub xpriv: Option<Xpriv>,
+    pub derivation_path: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TransactionOptions {
+    pub version: i32,
+    pub lock_time: u32,
+    pub sequence: u32,
+    pub sighash_type: u32,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ComposeTransactionResult {
+    pub network: Network,
+    pub selected_inputs: Vec<AuditedInput>,
+    pub skipped_inputs: Vec<SkippedInput>,
+    pub input_total_koinu: u64,
+    pub spend_output_total_koinu: u64,
+    pub change_amount_koinu: u64,
+    pub change_address: Option<String>,
+    pub change_script_pubkey_hex: Option<String>,
+    pub fee_koinu: u64,
+    pub estimated_size_bytes: u64,
+    pub actual_size_bytes: Option<u64>,
+    pub dust_change_folded_into_fee: bool,
+    pub unsigned_tx_hex: String,
+    pub signed_tx_hex: Option<String>,
+    pub signing_envelope: Option<SigningEnvelope>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AuditedInput {
+    pub txid: String,
+    pub vout: u32,
+    pub previous_output_value_koinu: u64,
+    pub script_pubkey_hex: String,
+    pub kind: SigningInputKind,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SkippedInput {
+    pub txid: String,
+    pub vout: u32,
+    pub previous_output_value_koinu: u64,
+    pub reason: String,
 }
 
 #[uniffi::export]
@@ -334,6 +457,16 @@ pub fn combine_signing_envelopes(envelopes: Vec<SigningEnvelope>) -> FfiResult<S
 pub fn finalize_signing_envelope(envelope: SigningEnvelope) -> FfiResult<SignedTransaction> {
     let envelope = envelope.try_into()?;
     easydoge_km::finalize_signing_envelope(&envelope)
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+#[uniffi::export]
+pub fn compose_and_sign_transaction(
+    request: ComposeTransactionRequest,
+) -> FfiResult<ComposeTransactionResult> {
+    let request = request.try_into()?;
+    easydoge_km::compose_and_sign_transaction(&request)
         .map(Into::into)
         .map_err(Into::into)
 }
@@ -569,6 +702,9 @@ impl From<easydoge_km::SigningEnvelopeInput> for SigningEnvelopeInput {
             script_pubkey_hex: value.script_pubkey_hex,
             redeem_script_hex: value.redeem_script_hex,
             sighash_type: value.sighash_type,
+            previous_output_value_koinu: value.previous_output_value_koinu,
+            multisig_threshold: value.multisig_threshold,
+            multisig_public_keys_hex: value.multisig_public_keys_hex,
         }
     }
 }
@@ -583,6 +719,9 @@ impl TryFrom<SigningEnvelopeInput> for easydoge_km::SigningEnvelopeInput {
             script_pubkey_hex: value.script_pubkey_hex,
             redeem_script_hex: value.redeem_script_hex,
             sighash_type: value.sighash_type,
+            previous_output_value_koinu: value.previous_output_value_koinu,
+            multisig_threshold: value.multisig_threshold,
+            multisig_public_keys_hex: value.multisig_public_keys_hex,
         })
     }
 }
@@ -624,6 +763,214 @@ impl TryFrom<SigningEnvelopeSignature> for easydoge_km::SigningEnvelopeSignature
             public_key_hex: value.public_key_hex,
             signature_hex: value.signature_hex,
         })
+    }
+}
+
+impl std::fmt::Debug for UtxoSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UtxoSigner")
+            .field("kind", &self.kind)
+            .field("wif", &self.wif.as_ref().map(|_| "[redacted]"))
+            .field("xpriv", &self.xpriv.as_ref().map(|_| "[redacted]"))
+            .field("derivation_path", &self.derivation_path)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ComposeTransactionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComposeTransactionRequest")
+            .field("network", &self.network)
+            .field("utxos", &self.utxos)
+            .field("outputs", &self.outputs)
+            .field("fee_policy", &self.fee_policy)
+            .field("coin_selection", &self.coin_selection)
+            .field("change", &self.change)
+            .field("options", &self.options)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ChangeDestination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChangeDestination")
+            .field("address", &self.address)
+            .field("xpriv", &self.xpriv.as_ref().map(|_| "[redacted]"))
+            .field("derivation_path", &self.derivation_path)
+            .finish()
+    }
+}
+
+impl TryFrom<ComposeTransactionRequest> for easydoge_km::ComposeTransactionRequest {
+    type Error = FfiError;
+
+    fn try_from(value: ComposeTransactionRequest) -> FfiResult<Self> {
+        Ok(Self {
+            network: value.network.into(),
+            utxos: value
+                .utxos
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<FfiResult<Vec<_>>>()?,
+            outputs: value.outputs.into_iter().map(Into::into).collect(),
+            fee_policy: value.fee_policy.into(),
+            coin_selection: value.coin_selection.into(),
+            change: value.change.map(Into::into),
+            options: value.options.into(),
+        })
+    }
+}
+
+impl TryFrom<SpendableUtxo> for easydoge_km::SpendableUtxo {
+    type Error = FfiError;
+
+    fn try_from(value: SpendableUtxo) -> FfiResult<Self> {
+        Ok(Self {
+            txid: value.txid,
+            vout: value.vout,
+            previous_output_value_koinu: value.previous_output_value_koinu,
+            script_pubkey_hex: value.script_pubkey_hex,
+            kind: value.kind.into(),
+            redeem_script_hex: value.redeem_script_hex,
+            multisig_threshold: value.multisig_threshold,
+            multisig_public_keys_hex: value.multisig_public_keys_hex,
+            signers: value.signers.into_iter().map(Into::into).collect(),
+            manually_selected: value.manually_selected,
+        })
+    }
+}
+
+impl From<UtxoSigner> for easydoge_km::UtxoSigner {
+    fn from(value: UtxoSigner) -> Self {
+        Self {
+            kind: value.kind.into(),
+            wif: value.wif,
+            xpriv: value.xpriv.map(Into::into),
+            derivation_path: value.derivation_path,
+        }
+    }
+}
+
+impl From<UtxoSignerKind> for easydoge_km::UtxoSignerKind {
+    fn from(value: UtxoSignerKind) -> Self {
+        match value {
+            UtxoSignerKind::Wif => easydoge_km::UtxoSignerKind::Wif,
+            UtxoSignerKind::XprivDerivation => easydoge_km::UtxoSignerKind::XprivDerivation,
+        }
+    }
+}
+
+impl From<TransactionOutput> for easydoge_km::TransactionOutput {
+    fn from(value: TransactionOutput) -> Self {
+        Self {
+            kind: value.kind.into(),
+            value_koinu: value.value_koinu,
+            address: value.address,
+            op_return_data_hex: value.op_return_data_hex,
+            script_hex: value.script_hex,
+        }
+    }
+}
+
+impl From<TransactionOutputKind> for easydoge_km::TransactionOutputKind {
+    fn from(value: TransactionOutputKind) -> Self {
+        match value {
+            TransactionOutputKind::Address => easydoge_km::TransactionOutputKind::Address,
+            TransactionOutputKind::OpReturn => easydoge_km::TransactionOutputKind::OpReturn,
+            TransactionOutputKind::ExpertRawScript => {
+                easydoge_km::TransactionOutputKind::ExpertRawScript
+            }
+        }
+    }
+}
+
+impl From<FeePolicy> for easydoge_km::FeePolicy {
+    fn from(value: FeePolicy) -> Self {
+        Self {
+            fee_rate_koinu_per_kb: value.fee_rate_koinu_per_kb,
+            dust_threshold_koinu: value.dust_threshold_koinu,
+        }
+    }
+}
+
+impl From<CoinSelectionStrategy> for easydoge_km::CoinSelectionStrategy {
+    fn from(value: CoinSelectionStrategy) -> Self {
+        match value {
+            CoinSelectionStrategy::MinInputs => easydoge_km::CoinSelectionStrategy::MinInputs,
+            CoinSelectionStrategy::SmallestFirst => {
+                easydoge_km::CoinSelectionStrategy::SmallestFirst
+            }
+            CoinSelectionStrategy::LargestFirst => easydoge_km::CoinSelectionStrategy::LargestFirst,
+            CoinSelectionStrategy::ManualSelectedInputs => {
+                easydoge_km::CoinSelectionStrategy::ManualSelectedInputs
+            }
+        }
+    }
+}
+
+impl From<ChangeDestination> for easydoge_km::ChangeDestination {
+    fn from(value: ChangeDestination) -> Self {
+        Self {
+            address: value.address,
+            xpriv: value.xpriv.map(Into::into),
+            derivation_path: value.derivation_path,
+        }
+    }
+}
+
+impl From<TransactionOptions> for easydoge_km::TransactionOptions {
+    fn from(value: TransactionOptions) -> Self {
+        Self {
+            version: value.version,
+            lock_time: value.lock_time,
+            sequence: value.sequence,
+            sighash_type: value.sighash_type,
+        }
+    }
+}
+
+impl From<easydoge_km::ComposeTransactionResult> for ComposeTransactionResult {
+    fn from(value: easydoge_km::ComposeTransactionResult) -> Self {
+        Self {
+            network: value.network.into(),
+            selected_inputs: value.selected_inputs.into_iter().map(Into::into).collect(),
+            skipped_inputs: value.skipped_inputs.into_iter().map(Into::into).collect(),
+            input_total_koinu: value.input_total_koinu,
+            spend_output_total_koinu: value.spend_output_total_koinu,
+            change_amount_koinu: value.change_amount_koinu,
+            change_address: value.change_address,
+            change_script_pubkey_hex: value.change_script_pubkey_hex,
+            fee_koinu: value.fee_koinu,
+            estimated_size_bytes: value.estimated_size_bytes,
+            actual_size_bytes: value.actual_size_bytes,
+            dust_change_folded_into_fee: value.dust_change_folded_into_fee,
+            unsigned_tx_hex: value.unsigned_tx_hex,
+            signed_tx_hex: value.signed_tx_hex,
+            signing_envelope: value.signing_envelope.map(Into::into),
+        }
+    }
+}
+
+impl From<easydoge_km::AuditedInput> for AuditedInput {
+    fn from(value: easydoge_km::AuditedInput) -> Self {
+        Self {
+            txid: value.txid,
+            vout: value.vout,
+            previous_output_value_koinu: value.previous_output_value_koinu,
+            script_pubkey_hex: value.script_pubkey_hex,
+            kind: value.kind.into(),
+        }
+    }
+}
+
+impl From<easydoge_km::SkippedInput> for SkippedInput {
+    fn from(value: easydoge_km::SkippedInput) -> Self {
+        Self {
+            txid: value.txid,
+            vout: value.vout,
+            previous_output_value_koinu: value.previous_output_value_koinu,
+            reason: value.reason,
+        }
     }
 }
 

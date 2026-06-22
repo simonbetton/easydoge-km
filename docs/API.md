@@ -31,8 +31,93 @@ Dogecoin-native xpriv/xpub version bytes are emitted by default. Legacy Bitcoin-
 | Sign P2PKH transactions | yes | yes | yes | yes | yes |
 | Signing envelopes | yes | yes | yes | yes | yes |
 | Multisig descriptors | yes | yes | yes | yes | yes |
+| Compose-and-sign transaction builder | yes | yes | yes | yes | yes |
 
 Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects; signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
+
+## Compose-and-Sign Transaction Builder
+
+`compose_and_sign_transaction` builds and funds Dogecoin legacy transactions entirely inside the Rust core, then signs every selected input for which valid signer material is supplied. Callers provide known UTXOs; the SDK does not fetch UTXOs, fetch live fees, broadcast transactions, or validate chain state.
+
+The request includes:
+
+- `utxos`: display/RPC `txid` hex, `vout`, `previous_output_value_koinu`, `script_pubkey_hex`, spend kind, signer metadata, and P2SH multisig descriptor metadata when needed.
+- `outputs`: address outputs, zero-value OP_RETURN data outputs, or `ExpertRawScript` outputs.
+- `fee_policy`: `fee_rate_koinu_per_kb` and `dust_threshold_koinu`.
+- `coin_selection`: `MinInputs`, `SmallestFirst`, `LargestFirst`, or `ManualSelectedInputs`.
+- `change`: an address or xpriv derivation source for non-dust change.
+- `options`: version, lock time, sequence, and sighash type. Size estimates use serialized bytes, not vbytes or weight.
+
+The result is audit-oriented: selected and skipped inputs, input total, spend output total, change amount/address/script, fee, estimated serialized size, actual serialized size when signed, whether dust change was folded into the fee, unsigned tx hex, signed tx hex when complete, and a signing envelope when more signatures are required.
+
+Signer ownership is checked before signing. P2PKH signers must match the previous output script pubkey. P2SH multisig UTXOs must have a script pubkey matching the redeem script, and signatures only count when the public key is part of the expected multisig set.
+
+CLI example:
+
+```sh
+easydoge-km --json tx compose --request-file compose-request.json
+```
+
+Example `compose-request.json`:
+
+```json
+{
+  "network": "mainnet",
+  "utxos": [
+    {
+      "txid": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "vout": 0,
+      "previous_output_value_koinu": 100000000,
+      "script_pubkey_hex": "76a9146dcc18cfcc4715927568546321b78541c8a83e7388ac",
+      "kind": "p2pkh",
+      "redeem_script_hex": null,
+      "multisig_threshold": null,
+      "multisig_public_keys_hex": [],
+      "signers": [
+        {
+          "kind": "wif",
+          "wif": "<redacted-wif>",
+          "xpriv": null,
+          "derivation_path": null
+        }
+      ],
+      "manually_selected": false
+    }
+  ],
+  "outputs": [
+    {
+      "kind": "address",
+      "value_koinu": 50000000,
+      "address": "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM",
+      "op_return_data_hex": null,
+      "script_hex": null
+    },
+    {
+      "kind": "op-return",
+      "value_koinu": 0,
+      "address": null,
+      "op_return_data_hex": "65617379646f6765",
+      "script_hex": null
+    }
+  ],
+  "fee_policy": {
+    "fee_rate_koinu_per_kb": 1000,
+    "dust_threshold_koinu": 1
+  },
+  "coin_selection": "min-inputs",
+  "change": {
+    "address": "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM",
+    "xpriv": null,
+    "derivation_path": null
+  },
+  "options": {
+    "version": 1,
+    "lock_time": 0,
+    "sequence": 4294967295,
+    "sighash_type": 1
+  }
+}
+```
 
 ## Derivation Paths
 

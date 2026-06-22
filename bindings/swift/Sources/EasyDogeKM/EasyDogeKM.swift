@@ -180,4 +180,8 @@ public struct EasyDogeKM: Sendable {
     public func finalizeSigningEnvelope(envelope: SigningEnvelope) throws -> SignedTransaction {
         try easydoge_km_ffi.finalizeSigningEnvelope(envelope: envelope)
     }
+
+    public func composeAndSignTransaction(request: ComposeTransactionRequest) throws -> ComposeTransactionResult {
+        try easydoge_km_ffi.composeAndSignTransaction(request: request)
+    }
 }

@@ -467,6 +467,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -612,6 +628,310 @@ public func FfiConverterTypeAccountKeySet_lower(_ value: AccountKeySet) -> RustB
 }
 
 
+public struct AuditedInput: Equatable, Hashable {
+    public var txid: String
+    public var vout: UInt32
+    public var previousOutputValueKoinu: UInt64
+    public var scriptPubkeyHex: String
+    public var kind: SigningInputKind
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(txid: String, vout: UInt32, previousOutputValueKoinu: UInt64, scriptPubkeyHex: String, kind: SigningInputKind) {
+        self.txid = txid
+        self.vout = vout
+        self.previousOutputValueKoinu = previousOutputValueKoinu
+        self.scriptPubkeyHex = scriptPubkeyHex
+        self.kind = kind
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AuditedInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAuditedInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AuditedInput {
+        return
+            try AuditedInput(
+                txid: FfiConverterString.read(from: &buf),
+                vout: FfiConverterUInt32.read(from: &buf),
+                previousOutputValueKoinu: FfiConverterUInt64.read(from: &buf),
+                scriptPubkeyHex: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeSigningInputKind.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AuditedInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txid, into: &buf)
+        FfiConverterUInt32.write(value.vout, into: &buf)
+        FfiConverterUInt64.write(value.previousOutputValueKoinu, into: &buf)
+        FfiConverterString.write(value.scriptPubkeyHex, into: &buf)
+        FfiConverterTypeSigningInputKind.write(value.kind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAuditedInput_lift(_ buf: RustBuffer) throws -> AuditedInput {
+    return try FfiConverterTypeAuditedInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAuditedInput_lower(_ value: AuditedInput) -> RustBuffer {
+    return FfiConverterTypeAuditedInput.lower(value)
+}
+
+
+public struct ChangeDestination: Equatable, Hashable {
+    public var address: String?
+    public var xpriv: Xpriv?
+    public var derivationPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(address: String?, xpriv: Xpriv?, derivationPath: String?) {
+        self.address = address
+        self.xpriv = xpriv
+        self.derivationPath = derivationPath
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ChangeDestination: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChangeDestination: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChangeDestination {
+        return
+            try ChangeDestination(
+                address: FfiConverterOptionString.read(from: &buf),
+                xpriv: FfiConverterOptionTypeXpriv.read(from: &buf),
+                derivationPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChangeDestination, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.address, into: &buf)
+        FfiConverterOptionTypeXpriv.write(value.xpriv, into: &buf)
+        FfiConverterOptionString.write(value.derivationPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeDestination_lift(_ buf: RustBuffer) throws -> ChangeDestination {
+    return try FfiConverterTypeChangeDestination.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeDestination_lower(_ value: ChangeDestination) -> RustBuffer {
+    return FfiConverterTypeChangeDestination.lower(value)
+}
+
+
+public struct ComposeTransactionRequest: Equatable, Hashable {
+    public var network: Network
+    public var utxos: [SpendableUtxo]
+    public var outputs: [TransactionOutput]
+    public var feePolicy: FeePolicy
+    public var coinSelection: CoinSelectionStrategy
+    public var change: ChangeDestination?
+    public var options: TransactionOptions
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(network: Network, utxos: [SpendableUtxo], outputs: [TransactionOutput], feePolicy: FeePolicy, coinSelection: CoinSelectionStrategy, change: ChangeDestination?, options: TransactionOptions) {
+        self.network = network
+        self.utxos = utxos
+        self.outputs = outputs
+        self.feePolicy = feePolicy
+        self.coinSelection = coinSelection
+        self.change = change
+        self.options = options
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ComposeTransactionRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeComposeTransactionRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ComposeTransactionRequest {
+        return
+            try ComposeTransactionRequest(
+                network: FfiConverterTypeNetwork.read(from: &buf),
+                utxos: FfiConverterSequenceTypeSpendableUtxo.read(from: &buf),
+                outputs: FfiConverterSequenceTypeTransactionOutput.read(from: &buf),
+                feePolicy: FfiConverterTypeFeePolicy.read(from: &buf),
+                coinSelection: FfiConverterTypeCoinSelectionStrategy.read(from: &buf),
+                change: FfiConverterOptionTypeChangeDestination.read(from: &buf),
+                options: FfiConverterTypeTransactionOptions.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ComposeTransactionRequest, into buf: inout [UInt8]) {
+        FfiConverterTypeNetwork.write(value.network, into: &buf)
+        FfiConverterSequenceTypeSpendableUtxo.write(value.utxos, into: &buf)
+        FfiConverterSequenceTypeTransactionOutput.write(value.outputs, into: &buf)
+        FfiConverterTypeFeePolicy.write(value.feePolicy, into: &buf)
+        FfiConverterTypeCoinSelectionStrategy.write(value.coinSelection, into: &buf)
+        FfiConverterOptionTypeChangeDestination.write(value.change, into: &buf)
+        FfiConverterTypeTransactionOptions.write(value.options, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComposeTransactionRequest_lift(_ buf: RustBuffer) throws -> ComposeTransactionRequest {
+    return try FfiConverterTypeComposeTransactionRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComposeTransactionRequest_lower(_ value: ComposeTransactionRequest) -> RustBuffer {
+    return FfiConverterTypeComposeTransactionRequest.lower(value)
+}
+
+
+public struct ComposeTransactionResult: Equatable, Hashable {
+    public var network: Network
+    public var selectedInputs: [AuditedInput]
+    public var skippedInputs: [SkippedInput]
+    public var inputTotalKoinu: UInt64
+    public var spendOutputTotalKoinu: UInt64
+    public var changeAmountKoinu: UInt64
+    public var changeAddress: String?
+    public var changeScriptPubkeyHex: String?
+    public var feeKoinu: UInt64
+    public var estimatedSizeBytes: UInt64
+    public var actualSizeBytes: UInt64?
+    public var dustChangeFoldedIntoFee: Bool
+    public var unsignedTxHex: String
+    public var signedTxHex: String?
+    public var signingEnvelope: SigningEnvelope?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(network: Network, selectedInputs: [AuditedInput], skippedInputs: [SkippedInput], inputTotalKoinu: UInt64, spendOutputTotalKoinu: UInt64, changeAmountKoinu: UInt64, changeAddress: String?, changeScriptPubkeyHex: String?, feeKoinu: UInt64, estimatedSizeBytes: UInt64, actualSizeBytes: UInt64?, dustChangeFoldedIntoFee: Bool, unsignedTxHex: String, signedTxHex: String?, signingEnvelope: SigningEnvelope?) {
+        self.network = network
+        self.selectedInputs = selectedInputs
+        self.skippedInputs = skippedInputs
+        self.inputTotalKoinu = inputTotalKoinu
+        self.spendOutputTotalKoinu = spendOutputTotalKoinu
+        self.changeAmountKoinu = changeAmountKoinu
+        self.changeAddress = changeAddress
+        self.changeScriptPubkeyHex = changeScriptPubkeyHex
+        self.feeKoinu = feeKoinu
+        self.estimatedSizeBytes = estimatedSizeBytes
+        self.actualSizeBytes = actualSizeBytes
+        self.dustChangeFoldedIntoFee = dustChangeFoldedIntoFee
+        self.unsignedTxHex = unsignedTxHex
+        self.signedTxHex = signedTxHex
+        self.signingEnvelope = signingEnvelope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ComposeTransactionResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeComposeTransactionResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ComposeTransactionResult {
+        return
+            try ComposeTransactionResult(
+                network: FfiConverterTypeNetwork.read(from: &buf),
+                selectedInputs: FfiConverterSequenceTypeAuditedInput.read(from: &buf),
+                skippedInputs: FfiConverterSequenceTypeSkippedInput.read(from: &buf),
+                inputTotalKoinu: FfiConverterUInt64.read(from: &buf),
+                spendOutputTotalKoinu: FfiConverterUInt64.read(from: &buf),
+                changeAmountKoinu: FfiConverterUInt64.read(from: &buf),
+                changeAddress: FfiConverterOptionString.read(from: &buf),
+                changeScriptPubkeyHex: FfiConverterOptionString.read(from: &buf),
+                feeKoinu: FfiConverterUInt64.read(from: &buf),
+                estimatedSizeBytes: FfiConverterUInt64.read(from: &buf),
+                actualSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                dustChangeFoldedIntoFee: FfiConverterBool.read(from: &buf),
+                unsignedTxHex: FfiConverterString.read(from: &buf),
+                signedTxHex: FfiConverterOptionString.read(from: &buf),
+                signingEnvelope: FfiConverterOptionTypeSigningEnvelope.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ComposeTransactionResult, into buf: inout [UInt8]) {
+        FfiConverterTypeNetwork.write(value.network, into: &buf)
+        FfiConverterSequenceTypeAuditedInput.write(value.selectedInputs, into: &buf)
+        FfiConverterSequenceTypeSkippedInput.write(value.skippedInputs, into: &buf)
+        FfiConverterUInt64.write(value.inputTotalKoinu, into: &buf)
+        FfiConverterUInt64.write(value.spendOutputTotalKoinu, into: &buf)
+        FfiConverterUInt64.write(value.changeAmountKoinu, into: &buf)
+        FfiConverterOptionString.write(value.changeAddress, into: &buf)
+        FfiConverterOptionString.write(value.changeScriptPubkeyHex, into: &buf)
+        FfiConverterUInt64.write(value.feeKoinu, into: &buf)
+        FfiConverterUInt64.write(value.estimatedSizeBytes, into: &buf)
+        FfiConverterOptionUInt64.write(value.actualSizeBytes, into: &buf)
+        FfiConverterBool.write(value.dustChangeFoldedIntoFee, into: &buf)
+        FfiConverterString.write(value.unsignedTxHex, into: &buf)
+        FfiConverterOptionString.write(value.signedTxHex, into: &buf)
+        FfiConverterOptionTypeSigningEnvelope.write(value.signingEnvelope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComposeTransactionResult_lift(_ buf: RustBuffer) throws -> ComposeTransactionResult {
+    return try FfiConverterTypeComposeTransactionResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComposeTransactionResult_lower(_ value: ComposeTransactionResult) -> RustBuffer {
+    return FfiConverterTypeComposeTransactionResult.lower(value)
+}
+
+
 public struct ExtendedKeyInfo: Equatable, Hashable {
     public var network: Network
     public var depth: UInt8
@@ -679,6 +999,60 @@ public func FfiConverterTypeExtendedKeyInfo_lift(_ buf: RustBuffer) throws -> Ex
 #endif
 public func FfiConverterTypeExtendedKeyInfo_lower(_ value: ExtendedKeyInfo) -> RustBuffer {
     return FfiConverterTypeExtendedKeyInfo.lower(value)
+}
+
+
+public struct FeePolicy: Equatable, Hashable {
+    public var feeRateKoinuPerKb: UInt64
+    public var dustThresholdKoinu: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(feeRateKoinuPerKb: UInt64, dustThresholdKoinu: UInt64) {
+        self.feeRateKoinuPerKb = feeRateKoinuPerKb
+        self.dustThresholdKoinu = dustThresholdKoinu
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FeePolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFeePolicy: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FeePolicy {
+        return
+            try FeePolicy(
+                feeRateKoinuPerKb: FfiConverterUInt64.read(from: &buf),
+                dustThresholdKoinu: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FeePolicy, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.feeRateKoinuPerKb, into: &buf)
+        FfiConverterUInt64.write(value.dustThresholdKoinu, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeePolicy_lift(_ buf: RustBuffer) throws -> FeePolicy {
+    return try FfiConverterTypeFeePolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeePolicy_lower(_ value: FeePolicy) -> RustBuffer {
+    return FfiConverterTypeFeePolicy.lower(value)
 }
 
 
@@ -1118,15 +1492,21 @@ public struct SigningEnvelopeInput: Equatable, Hashable {
     public var scriptPubkeyHex: String
     public var redeemScriptHex: String?
     public var sighashType: UInt32
+    public var previousOutputValueKoinu: UInt64?
+    public var multisigThreshold: UInt8?
+    public var multisigPublicKeysHex: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(inputIndex: UInt64, kind: SigningInputKind, scriptPubkeyHex: String, redeemScriptHex: String?, sighashType: UInt32) {
+    public init(inputIndex: UInt64, kind: SigningInputKind, scriptPubkeyHex: String, redeemScriptHex: String?, sighashType: UInt32, previousOutputValueKoinu: UInt64?, multisigThreshold: UInt8?, multisigPublicKeysHex: [String]) {
         self.inputIndex = inputIndex
         self.kind = kind
         self.scriptPubkeyHex = scriptPubkeyHex
         self.redeemScriptHex = redeemScriptHex
         self.sighashType = sighashType
+        self.previousOutputValueKoinu = previousOutputValueKoinu
+        self.multisigThreshold = multisigThreshold
+        self.multisigPublicKeysHex = multisigPublicKeysHex
     }
 
 
@@ -1149,7 +1529,10 @@ public struct FfiConverterTypeSigningEnvelopeInput: FfiConverterRustBuffer {
                 kind: FfiConverterTypeSigningInputKind.read(from: &buf),
                 scriptPubkeyHex: FfiConverterString.read(from: &buf),
                 redeemScriptHex: FfiConverterOptionString.read(from: &buf),
-                sighashType: FfiConverterUInt32.read(from: &buf)
+                sighashType: FfiConverterUInt32.read(from: &buf),
+                previousOutputValueKoinu: FfiConverterOptionUInt64.read(from: &buf),
+                multisigThreshold: FfiConverterOptionUInt8.read(from: &buf),
+                multisigPublicKeysHex: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -1159,6 +1542,9 @@ public struct FfiConverterTypeSigningEnvelopeInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.scriptPubkeyHex, into: &buf)
         FfiConverterOptionString.write(value.redeemScriptHex, into: &buf)
         FfiConverterUInt32.write(value.sighashType, into: &buf)
+        FfiConverterOptionUInt64.write(value.previousOutputValueKoinu, into: &buf)
+        FfiConverterOptionUInt8.write(value.multisigThreshold, into: &buf)
+        FfiConverterSequenceString.write(value.multisigPublicKeysHex, into: &buf)
     }
 }
 
@@ -1233,6 +1619,344 @@ public func FfiConverterTypeSigningEnvelopeSignature_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeSigningEnvelopeSignature_lower(_ value: SigningEnvelopeSignature) -> RustBuffer {
     return FfiConverterTypeSigningEnvelopeSignature.lower(value)
+}
+
+
+public struct SkippedInput: Equatable, Hashable {
+    public var txid: String
+    public var vout: UInt32
+    public var previousOutputValueKoinu: UInt64
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(txid: String, vout: UInt32, previousOutputValueKoinu: UInt64, reason: String) {
+        self.txid = txid
+        self.vout = vout
+        self.previousOutputValueKoinu = previousOutputValueKoinu
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SkippedInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSkippedInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SkippedInput {
+        return
+            try SkippedInput(
+                txid: FfiConverterString.read(from: &buf),
+                vout: FfiConverterUInt32.read(from: &buf),
+                previousOutputValueKoinu: FfiConverterUInt64.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SkippedInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txid, into: &buf)
+        FfiConverterUInt32.write(value.vout, into: &buf)
+        FfiConverterUInt64.write(value.previousOutputValueKoinu, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSkippedInput_lift(_ buf: RustBuffer) throws -> SkippedInput {
+    return try FfiConverterTypeSkippedInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSkippedInput_lower(_ value: SkippedInput) -> RustBuffer {
+    return FfiConverterTypeSkippedInput.lower(value)
+}
+
+
+public struct SpendableUtxo: Equatable, Hashable {
+    public var txid: String
+    public var vout: UInt32
+    public var previousOutputValueKoinu: UInt64
+    public var scriptPubkeyHex: String
+    public var kind: SigningInputKind
+    public var redeemScriptHex: String?
+    public var multisigThreshold: UInt8?
+    public var multisigPublicKeysHex: [String]
+    public var signers: [UtxoSigner]
+    public var manuallySelected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(txid: String, vout: UInt32, previousOutputValueKoinu: UInt64, scriptPubkeyHex: String, kind: SigningInputKind, redeemScriptHex: String?, multisigThreshold: UInt8?, multisigPublicKeysHex: [String], signers: [UtxoSigner], manuallySelected: Bool) {
+        self.txid = txid
+        self.vout = vout
+        self.previousOutputValueKoinu = previousOutputValueKoinu
+        self.scriptPubkeyHex = scriptPubkeyHex
+        self.kind = kind
+        self.redeemScriptHex = redeemScriptHex
+        self.multisigThreshold = multisigThreshold
+        self.multisigPublicKeysHex = multisigPublicKeysHex
+        self.signers = signers
+        self.manuallySelected = manuallySelected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpendableUtxo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendableUtxo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendableUtxo {
+        return
+            try SpendableUtxo(
+                txid: FfiConverterString.read(from: &buf),
+                vout: FfiConverterUInt32.read(from: &buf),
+                previousOutputValueKoinu: FfiConverterUInt64.read(from: &buf),
+                scriptPubkeyHex: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeSigningInputKind.read(from: &buf),
+                redeemScriptHex: FfiConverterOptionString.read(from: &buf),
+                multisigThreshold: FfiConverterOptionUInt8.read(from: &buf),
+                multisigPublicKeysHex: FfiConverterSequenceString.read(from: &buf),
+                signers: FfiConverterSequenceTypeUtxoSigner.read(from: &buf),
+                manuallySelected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendableUtxo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txid, into: &buf)
+        FfiConverterUInt32.write(value.vout, into: &buf)
+        FfiConverterUInt64.write(value.previousOutputValueKoinu, into: &buf)
+        FfiConverterString.write(value.scriptPubkeyHex, into: &buf)
+        FfiConverterTypeSigningInputKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.redeemScriptHex, into: &buf)
+        FfiConverterOptionUInt8.write(value.multisigThreshold, into: &buf)
+        FfiConverterSequenceString.write(value.multisigPublicKeysHex, into: &buf)
+        FfiConverterSequenceTypeUtxoSigner.write(value.signers, into: &buf)
+        FfiConverterBool.write(value.manuallySelected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendableUtxo_lift(_ buf: RustBuffer) throws -> SpendableUtxo {
+    return try FfiConverterTypeSpendableUtxo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendableUtxo_lower(_ value: SpendableUtxo) -> RustBuffer {
+    return FfiConverterTypeSpendableUtxo.lower(value)
+}
+
+
+public struct TransactionOptions: Equatable, Hashable {
+    public var version: Int32
+    public var lockTime: UInt32
+    public var sequence: UInt32
+    public var sighashType: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(version: Int32, lockTime: UInt32, sequence: UInt32, sighashType: UInt32) {
+        self.version = version
+        self.lockTime = lockTime
+        self.sequence = sequence
+        self.sighashType = sighashType
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TransactionOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransactionOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransactionOptions {
+        return
+            try TransactionOptions(
+                version: FfiConverterInt32.read(from: &buf),
+                lockTime: FfiConverterUInt32.read(from: &buf),
+                sequence: FfiConverterUInt32.read(from: &buf),
+                sighashType: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TransactionOptions, into buf: inout [UInt8]) {
+        FfiConverterInt32.write(value.version, into: &buf)
+        FfiConverterUInt32.write(value.lockTime, into: &buf)
+        FfiConverterUInt32.write(value.sequence, into: &buf)
+        FfiConverterUInt32.write(value.sighashType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOptions_lift(_ buf: RustBuffer) throws -> TransactionOptions {
+    return try FfiConverterTypeTransactionOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOptions_lower(_ value: TransactionOptions) -> RustBuffer {
+    return FfiConverterTypeTransactionOptions.lower(value)
+}
+
+
+public struct TransactionOutput: Equatable, Hashable {
+    public var kind: TransactionOutputKind
+    public var valueKoinu: UInt64
+    public var address: String?
+    public var opReturnDataHex: String?
+    public var scriptHex: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: TransactionOutputKind, valueKoinu: UInt64, address: String?, opReturnDataHex: String?, scriptHex: String?) {
+        self.kind = kind
+        self.valueKoinu = valueKoinu
+        self.address = address
+        self.opReturnDataHex = opReturnDataHex
+        self.scriptHex = scriptHex
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TransactionOutput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransactionOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransactionOutput {
+        return
+            try TransactionOutput(
+                kind: FfiConverterTypeTransactionOutputKind.read(from: &buf),
+                valueKoinu: FfiConverterUInt64.read(from: &buf),
+                address: FfiConverterOptionString.read(from: &buf),
+                opReturnDataHex: FfiConverterOptionString.read(from: &buf),
+                scriptHex: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TransactionOutput, into buf: inout [UInt8]) {
+        FfiConverterTypeTransactionOutputKind.write(value.kind, into: &buf)
+        FfiConverterUInt64.write(value.valueKoinu, into: &buf)
+        FfiConverterOptionString.write(value.address, into: &buf)
+        FfiConverterOptionString.write(value.opReturnDataHex, into: &buf)
+        FfiConverterOptionString.write(value.scriptHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOutput_lift(_ buf: RustBuffer) throws -> TransactionOutput {
+    return try FfiConverterTypeTransactionOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOutput_lower(_ value: TransactionOutput) -> RustBuffer {
+    return FfiConverterTypeTransactionOutput.lower(value)
+}
+
+
+public struct UtxoSigner: Equatable, Hashable {
+    public var kind: UtxoSignerKind
+    public var wif: String?
+    public var xpriv: Xpriv?
+    public var derivationPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: UtxoSignerKind, wif: String?, xpriv: Xpriv?, derivationPath: String?) {
+        self.kind = kind
+        self.wif = wif
+        self.xpriv = xpriv
+        self.derivationPath = derivationPath
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UtxoSigner: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUtxoSigner: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UtxoSigner {
+        return
+            try UtxoSigner(
+                kind: FfiConverterTypeUtxoSignerKind.read(from: &buf),
+                wif: FfiConverterOptionString.read(from: &buf),
+                xpriv: FfiConverterOptionTypeXpriv.read(from: &buf),
+                derivationPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UtxoSigner, into buf: inout [UInt8]) {
+        FfiConverterTypeUtxoSignerKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.wif, into: &buf)
+        FfiConverterOptionTypeXpriv.write(value.xpriv, into: &buf)
+        FfiConverterOptionString.write(value.derivationPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUtxoSigner_lift(_ buf: RustBuffer) throws -> UtxoSigner {
+    return try FfiConverterTypeUtxoSigner.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUtxoSigner_lower(_ value: UtxoSigner) -> RustBuffer {
+    return FfiConverterTypeUtxoSigner.lower(value)
 }
 
 
@@ -1404,6 +2128,87 @@ public func FfiConverterTypeXpub_lift(_ buf: RustBuffer) throws -> Xpub {
 public func FfiConverterTypeXpub_lower(_ value: Xpub) -> RustBuffer {
     return FfiConverterTypeXpub.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum CoinSelectionStrategy: Equatable, Hashable {
+
+    case minInputs
+    case smallestFirst
+    case largestFirst
+    case manualSelectedInputs
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CoinSelectionStrategy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoinSelectionStrategy: FfiConverterRustBuffer {
+    typealias SwiftType = CoinSelectionStrategy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoinSelectionStrategy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .minInputs
+
+        case 2: return .smallestFirst
+
+        case 3: return .largestFirst
+
+        case 4: return .manualSelectedInputs
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CoinSelectionStrategy, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .minInputs:
+            writeInt(&buf, Int32(1))
+
+
+        case .smallestFirst:
+            writeInt(&buf, Int32(2))
+
+
+        case .largestFirst:
+            writeInt(&buf, Int32(3))
+
+
+        case .manualSelectedInputs:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoinSelectionStrategy_lift(_ buf: RustBuffer) throws -> CoinSelectionStrategy {
+    return try FfiConverterTypeCoinSelectionStrategy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoinSelectionStrategy_lower(_ value: CoinSelectionStrategy) -> RustBuffer {
+    return FfiConverterTypeCoinSelectionStrategy.lower(value)
+}
+
 
 
 public enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
@@ -1743,6 +2548,195 @@ public func FfiConverterTypeSigningInputKind_lower(_ value: SigningInputKind) ->
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TransactionOutputKind: Equatable, Hashable {
+
+    case address
+    case opReturn
+    case expertRawScript
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TransactionOutputKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransactionOutputKind: FfiConverterRustBuffer {
+    typealias SwiftType = TransactionOutputKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransactionOutputKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .address
+
+        case 2: return .opReturn
+
+        case 3: return .expertRawScript
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TransactionOutputKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .address:
+            writeInt(&buf, Int32(1))
+
+
+        case .opReturn:
+            writeInt(&buf, Int32(2))
+
+
+        case .expertRawScript:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOutputKind_lift(_ buf: RustBuffer) throws -> TransactionOutputKind {
+    return try FfiConverterTypeTransactionOutputKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransactionOutputKind_lower(_ value: TransactionOutputKind) -> RustBuffer {
+    return FfiConverterTypeTransactionOutputKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum UtxoSignerKind: Equatable, Hashable {
+
+    case wif
+    case xprivDerivation
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UtxoSignerKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUtxoSignerKind: FfiConverterRustBuffer {
+    typealias SwiftType = UtxoSignerKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UtxoSignerKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .wif
+
+        case 2: return .xprivDerivation
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: UtxoSignerKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .wif:
+            writeInt(&buf, Int32(1))
+
+
+        case .xprivDerivation:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUtxoSignerKind_lift(_ buf: RustBuffer) throws -> UtxoSignerKind {
+    return try FfiConverterTypeUtxoSignerKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUtxoSignerKind_lower(_ value: UtxoSignerKind) -> RustBuffer {
+    return FfiConverterTypeUtxoSignerKind.lower(value)
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
+    typealias SwiftType = UInt8?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt8.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt8.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1770,6 +2764,78 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeChangeDestination: FfiConverterRustBuffer {
+    typealias SwiftType = ChangeDestination?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeChangeDestination.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeChangeDestination.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSigningEnvelope: FfiConverterRustBuffer {
+    typealias SwiftType = SigningEnvelope?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSigningEnvelope.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSigningEnvelope.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeXpriv: FfiConverterRustBuffer {
+    typealias SwiftType = Xpriv?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeXpriv.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeXpriv.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1787,6 +2853,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAuditedInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AuditedInput]
+
+    public static func write(_ value: [AuditedInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAuditedInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AuditedInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AuditedInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAuditedInput.read(from: &buf))
         }
         return seq
     }
@@ -1870,6 +2961,106 @@ fileprivate struct FfiConverterSequenceTypeSigningEnvelopeSignature: FfiConverte
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSkippedInput: FfiConverterRustBuffer {
+    typealias SwiftType = [SkippedInput]
+
+    public static func write(_ value: [SkippedInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSkippedInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SkippedInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SkippedInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSkippedInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSpendableUtxo: FfiConverterRustBuffer {
+    typealias SwiftType = [SpendableUtxo]
+
+    public static func write(_ value: [SpendableUtxo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpendableUtxo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpendableUtxo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpendableUtxo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpendableUtxo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTransactionOutput: FfiConverterRustBuffer {
+    typealias SwiftType = [TransactionOutput]
+
+    public static func write(_ value: [TransactionOutput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTransactionOutput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TransactionOutput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TransactionOutput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTransactionOutput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUtxoSigner: FfiConverterRustBuffer {
+    typealias SwiftType = [UtxoSigner]
+
+    public static func write(_ value: [UtxoSigner], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUtxoSigner.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UtxoSigner] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UtxoSigner]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUtxoSigner.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeXpub: FfiConverterRustBuffer {
     typealias SwiftType = [Xpub]
 
@@ -1914,6 +3105,13 @@ public func combineSigningEnvelopes(envelopes: [SigningEnvelope])throws  -> Sign
     return try  FfiConverterTypeSigningEnvelope_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(
         FfiConverterSequenceTypeSigningEnvelope.lower(envelopes),$0
+    )
+})
+}
+public func composeAndSignTransaction(request: ComposeTransactionRequest)throws  -> ComposeTransactionResult  {
+    return try  FfiConverterTypeComposeTransactionResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(
+        FfiConverterTypeComposeTransactionRequest_lower(request),$0
     )
 })
 }
@@ -2089,6 +3287,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691) {

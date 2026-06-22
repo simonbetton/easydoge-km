@@ -1,7 +1,12 @@
+use bitcoin::hashes::{hash160, Hash};
 use easydoge_km::{
-    account_xpriv_from_mnemonic, create_multisig_descriptor, derive_address_from_xpriv,
-    derive_address_from_xpub, inspect_xpriv, mnemonic_to_seed_hex, sign_message,
-    sign_p2pkh_transaction, validate_mnemonic, verify_message, wif_from_xpriv, Language, Network,
+    account_xpriv_from_mnemonic, compose_and_sign_transaction, create_multisig_descriptor,
+    derive_address_from_xpriv, derive_address_from_xpub, finalize_signing_envelope, inspect_xpriv,
+    mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction, validate_mnemonic, verify_message,
+    wif_from_xpriv, ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy,
+    Language, Network, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
+    SigningInputKind, SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind,
+    UtxoSigner, UtxoSignerKind,
 };
 use serde_json::Value;
 
@@ -202,4 +207,271 @@ fn multisig_descriptor_is_deterministic_and_dogecoin_p2sh() {
         descriptor.p2sh_address,
         vectors["multisig"]["p2sh_address"].as_str().unwrap()
     );
+}
+
+#[test]
+fn compose_builder_uses_display_txid_hex_and_serializes_reversed_outpoint_bytes() {
+    let request = compose_request_base(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        100_000_000,
+    );
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert!(result.signed_tx_hex.is_some());
+    assert_eq!(
+        &result.unsigned_tx_hex[10..74],
+        "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+    );
+}
+
+#[test]
+fn compose_builder_signs_p2pkh_with_change_and_audited_result() {
+    let request = compose_request_base(
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        150_000_000,
+    );
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.selected_inputs.len(), 1);
+    assert_eq!(result.input_total_koinu, 150_000_000);
+    assert_eq!(result.spend_output_total_koinu, 50_000_000);
+    assert!(result.change_amount_koinu > 0);
+    assert!(result.fee_koinu > 0);
+    assert!(result.actual_size_bytes.is_some());
+    assert!(result.signed_tx_hex.is_some());
+    assert!(result.signing_envelope.is_none());
+}
+
+#[test]
+fn compose_builder_supports_op_return_and_expert_raw_script_outputs() {
+    let mut request = compose_request_base(
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        200_000_000,
+    );
+    request.outputs.push(TransactionOutput {
+        kind: TransactionOutputKind::OpReturn,
+        value_koinu: 0,
+        address: None,
+        op_return_data_hex: Some("65617379646f6765".to_owned()),
+        script_hex: None,
+    });
+    request.outputs.push(TransactionOutput {
+        kind: TransactionOutputKind::ExpertRawScript,
+        value_koinu: 1_000,
+        address: None,
+        op_return_data_hex: None,
+        script_hex: Some("51".to_owned()),
+    });
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert!(result.unsigned_tx_hex.contains("6a0865617379646f6765"));
+    assert!(result.signed_tx_hex.is_some());
+}
+
+#[test]
+fn compose_builder_rejects_signer_that_does_not_match_p2pkh_utxo() {
+    let mut request = compose_request_base(
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        100_000_000,
+    );
+    request.utxos[0].script_pubkey_hex =
+        "76a914000000000000000000000000000000000000000088ac".to_owned();
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(error.to_string().contains("does not match P2PKH UTXO"));
+}
+
+#[test]
+fn p2sh_multisig_finalize_requires_threshold_signatures() {
+    let vectors = vectors();
+    let envelope = SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: vectors["transaction"]["unsigned_tx_hex"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        inputs: vec![SigningEnvelopeInput {
+            input_index: 0,
+            kind: SigningInputKind::P2shMultisig,
+            script_pubkey_hex: "a914000000000000000000000000000000000000000087".to_owned(),
+            redeem_script_hex: Some(
+                vectors["multisig"]["redeem_script_hex"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            sighash_type: 1,
+            previous_output_value_koinu: Some(100_000_000),
+            multisig_threshold: Some(2),
+            multisig_public_keys_hex: vectors["multisig"]["public_keys_hex"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect(),
+        }],
+        signatures: vec![SigningEnvelopeSignature {
+            input_index: 0,
+            public_key_hex: vectors["multisig"]["public_keys_hex"][0]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            signature_hex: "01".to_owned(),
+        }],
+    };
+    let error = finalize_signing_envelope(&envelope).unwrap_err();
+    assert!(error.to_string().contains("threshold is 2"));
+}
+
+#[test]
+fn p2sh_multisig_finalize_uses_redeem_script_public_key_order() {
+    let vectors = vectors();
+    let public_keys = vectors["multisig"]["public_keys_hex"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let mut reversed_public_keys = public_keys.clone();
+    reversed_public_keys.reverse();
+    let redeem_script_hex = vectors["multisig"]["redeem_script_hex"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let envelope = SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: vectors["transaction"]["unsigned_tx_hex"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        inputs: vec![SigningEnvelopeInput {
+            input_index: 0,
+            kind: SigningInputKind::P2shMultisig,
+            script_pubkey_hex: "a914000000000000000000000000000000000000000087".to_owned(),
+            redeem_script_hex: Some(redeem_script_hex.clone()),
+            sighash_type: 1,
+            previous_output_value_koinu: Some(100_000_000),
+            multisig_threshold: Some(2),
+            multisig_public_keys_hex: reversed_public_keys,
+        }],
+        signatures: vec![
+            SigningEnvelopeSignature {
+                input_index: 0,
+                public_key_hex: public_keys[1].clone(),
+                signature_hex: "bb".to_owned(),
+            },
+            SigningEnvelopeSignature {
+                input_index: 0,
+                public_key_hex: public_keys[0].clone(),
+                signature_hex: "aa".to_owned(),
+            },
+        ],
+    };
+
+    let signed = finalize_signing_envelope(&envelope).unwrap();
+
+    assert!(signed
+        .signed_tx_hex
+        .contains(&format!("4d0001aa01bb47{redeem_script_hex}")));
+}
+
+#[test]
+fn compose_builder_counts_pushdata_prefix_for_large_p2sh_redeem_script() {
+    let mut request = compose_request_base(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        9_343,
+    );
+    let public_keys = [
+        "020000000000000000000000000000000000000000000000000000000000000001",
+        "030000000000000000000000000000000000000000000000000000000000000002",
+        "020000000000000000000000000000000000000000000000000000000000000003",
+    ];
+    let redeem_script_hex = format!(
+        "52{}53ae",
+        public_keys
+            .iter()
+            .map(|public_key| format!("21{public_key}"))
+            .collect::<String>()
+    );
+    let redeem_script = hex::decode(&redeem_script_hex).unwrap();
+    let script_hash = hash160::Hash::hash(&redeem_script);
+    request.utxos[0] = SpendableUtxo {
+        txid: "4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
+        vout: 0,
+        previous_output_value_koinu: 9_343,
+        script_pubkey_hex: format!("a914{}87", hex::encode(script_hash)),
+        kind: SigningInputKind::P2shMultisig,
+        redeem_script_hex: Some(redeem_script_hex),
+        multisig_threshold: Some(2),
+        multisig_public_keys_hex: public_keys.iter().map(|key| (*key).to_owned()).collect(),
+        signers: vec![],
+        manually_selected: false,
+    };
+    request.change = None;
+    request.outputs[0].value_koinu = 9_000;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(result.estimated_size_bytes, 343);
+    assert_eq!(result.fee_koinu, 343);
+    assert!(result.signed_tx_hex.is_none());
+    assert!(result.signing_envelope.is_some());
+}
+
+fn compose_request_base(txid: &str, previous_output_value_koinu: u64) -> ComposeTransactionRequest {
+    let vectors = vectors();
+    ComposeTransactionRequest {
+        network: Network::Mainnet,
+        utxos: vec![SpendableUtxo {
+            txid: txid.to_owned(),
+            vout: 0,
+            previous_output_value_koinu,
+            script_pubkey_hex: vectors["transaction"]["script_pubkey_hex"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            kind: SigningInputKind::P2pkh,
+            redeem_script_hex: None,
+            multisig_threshold: None,
+            multisig_public_keys_hex: vec![],
+            signers: vec![UtxoSigner {
+                kind: UtxoSignerKind::Wif,
+                wif: Some(
+                    vectors["mnemonic"]["account"]["wif"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                ),
+                xpriv: None,
+                derivation_path: None,
+            }],
+            manually_selected: false,
+        }],
+        outputs: vec![TransactionOutput {
+            kind: TransactionOutputKind::Address,
+            value_koinu: 50_000_000,
+            address: Some(
+                vectors["mnemonic"]["receive"]["address"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            op_return_data_hex: None,
+            script_hex: None,
+        }],
+        fee_policy: FeePolicy {
+            fee_rate_koinu_per_kb: 1_000,
+            dust_threshold_koinu: 1,
+        },
+        coin_selection: CoinSelectionStrategy::MinInputs,
+        change: Some(ChangeDestination {
+            address: Some(
+                vectors["mnemonic"]["receive"]["address"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            xpriv: None,
+            derivation_path: None,
+        }),
+        options: TransactionOptions::default(),
+    }
 }

@@ -3,11 +3,12 @@ use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event, KeyCode};
 use easydoge_km::{
     account_xpriv_from_mnemonic, address_from_wif, combine_signing_envelopes,
-    derive_address_from_xpriv, derive_address_from_xpub, derive_path_from_xpriv,
-    finalize_signing_envelope, generate_mnemonic, inspect_xpriv, inspect_xpub,
-    mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction, sign_signing_envelope,
-    validate_address, validate_mnemonic, verify_message, wif_from_xpriv, xpub_from_xpriv, Language,
-    MnemonicOptions, Network, SigningEnvelope, Xpriv, Xpub,
+    compose_and_sign_transaction, derive_address_from_xpriv, derive_address_from_xpub,
+    derive_path_from_xpriv, finalize_signing_envelope, generate_mnemonic, inspect_xpriv,
+    inspect_xpub, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
+    sign_signing_envelope, validate_address, validate_mnemonic, verify_message, wif_from_xpriv,
+    xpub_from_xpriv, ComposeTransactionRequest, Language, MnemonicOptions, Network,
+    SigningEnvelope, Xpriv, Xpub,
 };
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -236,6 +237,10 @@ enum TxCommand {
         network: String,
         #[arg(long, default_value_t = 1)]
         sighash_type: u32,
+    },
+    Compose {
+        #[arg(long)]
+        request_file: String,
     },
 }
 
@@ -572,6 +577,16 @@ fn handle_tx(command: TxCommand, json: bool) -> Result<()> {
                 print_json(serde_json::to_value(signed)?)
             } else {
                 println!("{}", signed.signed_tx_hex);
+                Ok(())
+            }
+        }
+        TxCommand::Compose { request_file } => {
+            let request = read_compose_request(&request_file)?;
+            let result = compose_and_sign_transaction(&request)?;
+            if json {
+                print_json(serde_json::to_value(result)?)
+            } else {
+                println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
             }
         }
@@ -1034,6 +1049,11 @@ fn print_json(value: serde_json::Value) -> Result<()> {
 }
 
 fn read_envelope(path: &str) -> Result<SigningEnvelope> {
+    let contents = fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&contents)?)
+}
+
+fn read_compose_request(path: &str) -> Result<ComposeTransactionRequest> {
     let contents = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&contents)?)
 }

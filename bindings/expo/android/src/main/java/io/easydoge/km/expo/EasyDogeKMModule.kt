@@ -6,13 +6,26 @@ import io.easydoge.km.AndroidKeystoreWalletSecretStore
 import io.easydoge.km.EasyDogeKM
 import io.easydoge.km.StoredWalletHandle
 import io.easydoge.km.StoredWalletProtection
+import uniffi.easydoge_km_ffi.AuditedInput
+import uniffi.easydoge_km_ffi.ChangeDestination
+import uniffi.easydoge_km_ffi.CoinSelectionStrategy
+import uniffi.easydoge_km_ffi.ComposeTransactionRequest
+import uniffi.easydoge_km_ffi.ComposeTransactionResult
+import uniffi.easydoge_km_ffi.FeePolicy
 import uniffi.easydoge_km_ffi.Language
 import uniffi.easydoge_km_ffi.MnemonicOptions
 import uniffi.easydoge_km_ffi.Network
+import uniffi.easydoge_km_ffi.SkippedInput
 import uniffi.easydoge_km_ffi.SigningEnvelope
 import uniffi.easydoge_km_ffi.SigningEnvelopeInput
 import uniffi.easydoge_km_ffi.SigningEnvelopeSignature
 import uniffi.easydoge_km_ffi.SigningInputKind
+import uniffi.easydoge_km_ffi.SpendableUtxo
+import uniffi.easydoge_km_ffi.TransactionOptions
+import uniffi.easydoge_km_ffi.TransactionOutput
+import uniffi.easydoge_km_ffi.TransactionOutputKind
+import uniffi.easydoge_km_ffi.UtxoSigner
+import uniffi.easydoge_km_ffi.UtxoSignerKind
 import uniffi.easydoge_km_ffi.Xpriv
 import uniffi.easydoge_km_ffi.Xpub
 import uniffi.easydoge_km_ffi.validateAddress
@@ -127,6 +140,10 @@ class EasyDogeKMModule : Module() {
             sdk.finalizeSigningEnvelope(envelope.toSigningEnvelope()).toMap()
         }
 
+        AsyncFunction("composeAndSignTransaction") { request: Map<String, Any?> ->
+            sdk.composeAndSignTransaction(request.toComposeTransactionRequest()).toMap()
+        }
+
         AsyncFunction("storeMnemonic") { phrase: String, protection: String ->
             store.storeMnemonic(phrase, parseProtection(protection)).toMap()
         }
@@ -174,6 +191,27 @@ private fun parseSigningInputKind(value: String?): SigningInputKind = when (valu
     "p2pkh" -> SigningInputKind.P2PKH
     "p2sh-multisig", "p2shMultisig" -> SigningInputKind.P2SH_MULTISIG
     else -> error("Invalid signing input kind: ${value.orEmpty()}")
+}
+
+private fun parseUtxoSignerKind(value: String?): UtxoSignerKind = when (value) {
+    "wif" -> UtxoSignerKind.WIF
+    "xpriv-derivation", "xprivDerivation" -> UtxoSignerKind.XPRIV_DERIVATION
+    else -> error("Invalid UTXO signer kind: ${value.orEmpty()}")
+}
+
+private fun parseTransactionOutputKind(value: String?): TransactionOutputKind = when (value) {
+    "address" -> TransactionOutputKind.ADDRESS
+    "op-return", "opReturn" -> TransactionOutputKind.OP_RETURN
+    "expert-raw-script", "expertRawScript" -> TransactionOutputKind.EXPERT_RAW_SCRIPT
+    else -> error("Invalid transaction output kind: ${value.orEmpty()}")
+}
+
+private fun parseCoinSelectionStrategy(value: String?): CoinSelectionStrategy = when (value) {
+    "min-inputs", "minInputs" -> CoinSelectionStrategy.MIN_INPUTS
+    "smallest-first", "smallestFirst" -> CoinSelectionStrategy.SMALLEST_FIRST
+    "largest-first", "largestFirst" -> CoinSelectionStrategy.LARGEST_FIRST
+    "manual-selected-inputs", "manualSelectedInputs" -> CoinSelectionStrategy.MANUAL_SELECTED_INPUTS
+    else -> error("Invalid coin selection strategy: ${value.orEmpty()}")
 }
 
 private fun StoredWalletHandle.toMap(): Map<String, String> = mapOf("id" to id)
@@ -258,6 +296,9 @@ private fun Map<String, Any?>.toSigningEnvelopeInput(): SigningEnvelopeInput =
         scriptPubkeyHex = this["scriptPubkeyHex"] as? String ?: "",
         redeemScriptHex = this["redeemScriptHex"] as? String,
         sighashType = number("sighashType", 1).toLong().toUInt(),
+        previousOutputValueKoinu = optionalNumber("previousOutputValueKoinu")?.toLong()?.toULong(),
+        multisigThreshold = optionalNumber("multisigThreshold")?.toInt()?.toUByte(),
+        multisigPublicKeysHex = stringList("multisigPublicKeysHex"),
     )
 
 private fun Map<String, Any?>.toSigningEnvelopeSignature(): SigningEnvelopeSignature =
@@ -283,6 +324,9 @@ private fun SigningEnvelopeInput.toMap(): Map<String, Any?> =
         "scriptPubkeyHex" to scriptPubkeyHex,
         "redeemScriptHex" to redeemScriptHex,
         "sighashType" to sighashType.toInt(),
+        "previousOutputValueKoinu" to previousOutputValueKoinu?.toLong(),
+        "multisigThreshold" to multisigThreshold?.toInt(),
+        "multisigPublicKeysHex" to multisigPublicKeysHex,
     )
 
 private fun SigningEnvelopeSignature.toMap(): Map<String, Any> =
@@ -292,10 +336,122 @@ private fun SigningEnvelopeSignature.toMap(): Map<String, Any> =
         "signatureHex" to signatureHex,
     )
 
+private fun ComposeTransactionResult.toMap(): Map<String, Any?> =
+    mapOf(
+        "network" to network.raw(),
+        "selectedInputs" to selectedInputs.map { it.toMap() },
+        "skippedInputs" to skippedInputs.map { it.toMap() },
+        "inputTotalKoinu" to inputTotalKoinu.toLong(),
+        "spendOutputTotalKoinu" to spendOutputTotalKoinu.toLong(),
+        "changeAmountKoinu" to changeAmountKoinu.toLong(),
+        "changeAddress" to changeAddress,
+        "changeScriptPubkeyHex" to changeScriptPubkeyHex,
+        "feeKoinu" to feeKoinu.toLong(),
+        "estimatedSizeBytes" to estimatedSizeBytes.toLong(),
+        "actualSizeBytes" to actualSizeBytes?.toLong(),
+        "dustChangeFoldedIntoFee" to dustChangeFoldedIntoFee,
+        "unsignedTxHex" to unsignedTxHex,
+        "signedTxHex" to signedTxHex,
+        "signingEnvelope" to signingEnvelope?.toMap(),
+    )
+
+private fun AuditedInput.toMap(): Map<String, Any> =
+    mapOf(
+        "txid" to txid,
+        "vout" to vout.toLong(),
+        "previousOutputValueKoinu" to previousOutputValueKoinu.toLong(),
+        "scriptPubkeyHex" to scriptPubkeyHex,
+        "kind" to kind.raw(),
+    )
+
+private fun SkippedInput.toMap(): Map<String, Any> =
+    mapOf(
+        "txid" to txid,
+        "vout" to vout.toLong(),
+        "previousOutputValueKoinu" to previousOutputValueKoinu.toLong(),
+        "reason" to reason,
+    )
+
 private fun Map<String, Any?>.number(
     key: String,
     fallback: Number,
 ): Number = this[key] as? Number ?: fallback
+
+private fun Map<String, Any?>.optionalNumber(key: String): Number? = this[key] as? Number
+
+@Suppress("UNCHECKED_CAST")
+private fun Map<String, Any?>.dictionary(key: String): Map<String, Any?> =
+    this[key] as? Map<String, Any?> ?: emptyMap()
+
+@Suppress("UNCHECKED_CAST")
+private fun Map<String, Any?>.dictionaries(key: String): List<Map<String, Any?>> =
+    this[key] as? List<Map<String, Any?>> ?: emptyList()
+
+private fun Map<String, Any?>.stringList(key: String): List<String> =
+    (this[key] as? List<*>).orEmpty().filterIsInstance<String>()
+
+private fun Map<String, Any?>.toComposeTransactionRequest(): ComposeTransactionRequest =
+    ComposeTransactionRequest(
+        network = parseNetwork(this["network"] as? String),
+        utxos = dictionaries("utxos").map { it.toSpendableUtxo() },
+        outputs = dictionaries("outputs").map { it.toTransactionOutput() },
+        feePolicy = dictionary("feePolicy").toFeePolicy(),
+        coinSelection = parseCoinSelectionStrategy(this["coinSelection"] as? String),
+        change = (this["change"] as? Map<*, *>)?.let { dictionary("change").toChangeDestination() },
+        options = dictionary("options").toTransactionOptions(),
+    )
+
+private fun Map<String, Any?>.toSpendableUtxo(): SpendableUtxo =
+    SpendableUtxo(
+        txid = this["txid"] as? String ?: "",
+        vout = number("vout", 0).toLong().toUInt(),
+        previousOutputValueKoinu = number("previousOutputValueKoinu", 0).toLong().toULong(),
+        scriptPubkeyHex = this["scriptPubkeyHex"] as? String ?: "",
+        kind = parseSigningInputKind(this["kind"] as? String),
+        redeemScriptHex = this["redeemScriptHex"] as? String,
+        multisigThreshold = optionalNumber("multisigThreshold")?.toInt()?.toUByte(),
+        multisigPublicKeysHex = stringList("multisigPublicKeysHex"),
+        signers = dictionaries("signers").map { it.toUtxoSigner() },
+        manuallySelected = this["manuallySelected"] as? Boolean ?: false,
+    )
+
+private fun Map<String, Any?>.toUtxoSigner(): UtxoSigner =
+    UtxoSigner(
+        kind = parseUtxoSignerKind(this["kind"] as? String),
+        wif = this["wif"] as? String,
+        xpriv = (this["xpriv"] as? Map<*, *>)?.let { dictionary("xpriv").toXpriv() },
+        derivationPath = this["derivationPath"] as? String,
+    )
+
+private fun Map<String, Any?>.toTransactionOutput(): TransactionOutput =
+    TransactionOutput(
+        kind = parseTransactionOutputKind(this["kind"] as? String),
+        valueKoinu = number("valueKoinu", 0).toLong().toULong(),
+        address = this["address"] as? String,
+        opReturnDataHex = this["opReturnDataHex"] as? String,
+        scriptHex = this["scriptHex"] as? String,
+    )
+
+private fun Map<String, Any?>.toFeePolicy(): FeePolicy =
+    FeePolicy(
+        feeRateKoinuPerKb = number("feeRateKoinuPerKb", 0).toLong().toULong(),
+        dustThresholdKoinu = number("dustThresholdKoinu", 0).toLong().toULong(),
+    )
+
+private fun Map<String, Any?>.toChangeDestination(): ChangeDestination =
+    ChangeDestination(
+        address = this["address"] as? String,
+        xpriv = (this["xpriv"] as? Map<*, *>)?.let { dictionary("xpriv").toXpriv() },
+        derivationPath = this["derivationPath"] as? String,
+    )
+
+private fun Map<String, Any?>.toTransactionOptions(): TransactionOptions =
+    TransactionOptions(
+        version = number("version", 1).toInt(),
+        lockTime = number("lockTime", 0).toLong().toUInt(),
+        sequence = number("sequence", UInt.MAX_VALUE.toLong()).toLong().toUInt(),
+        sighashType = number("sighashType", 1).toLong().toUInt(),
+    )
 
 private fun Network.raw(): String = when (this) {
     Network.MAINNET -> "mainnet"

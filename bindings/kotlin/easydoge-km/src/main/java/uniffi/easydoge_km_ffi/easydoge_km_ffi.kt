@@ -641,6 +641,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes(
     ): Short
+    external fun uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction(
+    ): Short
     external fun uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor(
     ): Short
     external fun uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv(
@@ -695,6 +697,8 @@ internal object UniffiLib {
     external fun uniffi_easydoge_km_ffi_fn_func_address_from_wif(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(`envelopes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_easydoge_km_ffi_fn_func_create_multisig_descriptor(`network`: RustBuffer.ByValue,`threshold`: Byte,`cosignerXpubs`: RustBuffer.ByValue,`childPath`: RustBuffer.ByValue,`sorted`: Byte,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
@@ -858,6 +862,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691.toShort()) {
@@ -1079,6 +1086,29 @@ public object FfiConverterUInt: FfiConverter<UInt, Int> {
 /**
  * @suppress
  */
+public object FfiConverterInt: FfiConverter<Int, Int> {
+    override fun lift(value: Int): Int {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Int {
+        return buf.getInt()
+    }
+
+    override fun lower(value: Int): Int {
+        return value
+    }
+
+    override fun allocationSize(value: Int) = 4UL
+
+    override fun write(value: Int, buf: ByteBuffer) {
+        buf.putInt(value)
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterULong: FfiConverter<ULong, Long> {
     override fun lift(value: Long): ULong {
         return value.toULong()
@@ -1234,6 +1264,268 @@ public object FfiConverterTypeAccountKeySet: FfiConverterRustBuffer<AccountKeySe
 
 
 
+data class AuditedInput (
+    var `txid`: kotlin.String
+    ,
+    var `vout`: kotlin.UInt
+    ,
+    var `previousOutputValueKoinu`: kotlin.ULong
+    ,
+    var `scriptPubkeyHex`: kotlin.String
+    ,
+    var `kind`: SigningInputKind
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAuditedInput: FfiConverterRustBuffer<AuditedInput> {
+    override fun read(buf: ByteBuffer): AuditedInput {
+        return AuditedInput(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSigningInputKind.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AuditedInput) = (
+            FfiConverterString.allocationSize(value.`txid`) +
+            FfiConverterUInt.allocationSize(value.`vout`) +
+            FfiConverterULong.allocationSize(value.`previousOutputValueKoinu`) +
+            FfiConverterString.allocationSize(value.`scriptPubkeyHex`) +
+            FfiConverterTypeSigningInputKind.allocationSize(value.`kind`)
+    )
+
+    override fun write(value: AuditedInput, buf: ByteBuffer) {
+            FfiConverterString.write(value.`txid`, buf)
+            FfiConverterUInt.write(value.`vout`, buf)
+            FfiConverterULong.write(value.`previousOutputValueKoinu`, buf)
+            FfiConverterString.write(value.`scriptPubkeyHex`, buf)
+            FfiConverterTypeSigningInputKind.write(value.`kind`, buf)
+    }
+}
+
+
+
+data class ChangeDestination (
+    var `address`: kotlin.String?
+    ,
+    var `xpriv`: Xpriv?
+    ,
+    var `derivationPath`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChangeDestination: FfiConverterRustBuffer<ChangeDestination> {
+    override fun read(buf: ByteBuffer): ChangeDestination {
+        return ChangeDestination(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeXpriv.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChangeDestination) = (
+            FfiConverterOptionalString.allocationSize(value.`address`) +
+            FfiConverterOptionalTypeXpriv.allocationSize(value.`xpriv`) +
+            FfiConverterOptionalString.allocationSize(value.`derivationPath`)
+    )
+
+    override fun write(value: ChangeDestination, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`address`, buf)
+            FfiConverterOptionalTypeXpriv.write(value.`xpriv`, buf)
+            FfiConverterOptionalString.write(value.`derivationPath`, buf)
+    }
+}
+
+
+
+data class ComposeTransactionRequest (
+    var `network`: Network
+    ,
+    var `utxos`: List<SpendableUtxo>
+    ,
+    var `outputs`: List<TransactionOutput>
+    ,
+    var `feePolicy`: FeePolicy
+    ,
+    var `coinSelection`: CoinSelectionStrategy
+    ,
+    var `change`: ChangeDestination?
+    ,
+    var `options`: TransactionOptions
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeComposeTransactionRequest: FfiConverterRustBuffer<ComposeTransactionRequest> {
+    override fun read(buf: ByteBuffer): ComposeTransactionRequest {
+        return ComposeTransactionRequest(
+            FfiConverterTypeNetwork.read(buf),
+            FfiConverterSequenceTypeSpendableUtxo.read(buf),
+            FfiConverterSequenceTypeTransactionOutput.read(buf),
+            FfiConverterTypeFeePolicy.read(buf),
+            FfiConverterTypeCoinSelectionStrategy.read(buf),
+            FfiConverterOptionalTypeChangeDestination.read(buf),
+            FfiConverterTypeTransactionOptions.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ComposeTransactionRequest) = (
+            FfiConverterTypeNetwork.allocationSize(value.`network`) +
+            FfiConverterSequenceTypeSpendableUtxo.allocationSize(value.`utxos`) +
+            FfiConverterSequenceTypeTransactionOutput.allocationSize(value.`outputs`) +
+            FfiConverterTypeFeePolicy.allocationSize(value.`feePolicy`) +
+            FfiConverterTypeCoinSelectionStrategy.allocationSize(value.`coinSelection`) +
+            FfiConverterOptionalTypeChangeDestination.allocationSize(value.`change`) +
+            FfiConverterTypeTransactionOptions.allocationSize(value.`options`)
+    )
+
+    override fun write(value: ComposeTransactionRequest, buf: ByteBuffer) {
+            FfiConverterTypeNetwork.write(value.`network`, buf)
+            FfiConverterSequenceTypeSpendableUtxo.write(value.`utxos`, buf)
+            FfiConverterSequenceTypeTransactionOutput.write(value.`outputs`, buf)
+            FfiConverterTypeFeePolicy.write(value.`feePolicy`, buf)
+            FfiConverterTypeCoinSelectionStrategy.write(value.`coinSelection`, buf)
+            FfiConverterOptionalTypeChangeDestination.write(value.`change`, buf)
+            FfiConverterTypeTransactionOptions.write(value.`options`, buf)
+    }
+}
+
+
+
+data class ComposeTransactionResult (
+    var `network`: Network
+    ,
+    var `selectedInputs`: List<AuditedInput>
+    ,
+    var `skippedInputs`: List<SkippedInput>
+    ,
+    var `inputTotalKoinu`: kotlin.ULong
+    ,
+    var `spendOutputTotalKoinu`: kotlin.ULong
+    ,
+    var `changeAmountKoinu`: kotlin.ULong
+    ,
+    var `changeAddress`: kotlin.String?
+    ,
+    var `changeScriptPubkeyHex`: kotlin.String?
+    ,
+    var `feeKoinu`: kotlin.ULong
+    ,
+    var `estimatedSizeBytes`: kotlin.ULong
+    ,
+    var `actualSizeBytes`: kotlin.ULong?
+    ,
+    var `dustChangeFoldedIntoFee`: kotlin.Boolean
+    ,
+    var `unsignedTxHex`: kotlin.String
+    ,
+    var `signedTxHex`: kotlin.String?
+    ,
+    var `signingEnvelope`: SigningEnvelope?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeComposeTransactionResult: FfiConverterRustBuffer<ComposeTransactionResult> {
+    override fun read(buf: ByteBuffer): ComposeTransactionResult {
+        return ComposeTransactionResult(
+            FfiConverterTypeNetwork.read(buf),
+            FfiConverterSequenceTypeAuditedInput.read(buf),
+            FfiConverterSequenceTypeSkippedInput.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeSigningEnvelope.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ComposeTransactionResult) = (
+            FfiConverterTypeNetwork.allocationSize(value.`network`) +
+            FfiConverterSequenceTypeAuditedInput.allocationSize(value.`selectedInputs`) +
+            FfiConverterSequenceTypeSkippedInput.allocationSize(value.`skippedInputs`) +
+            FfiConverterULong.allocationSize(value.`inputTotalKoinu`) +
+            FfiConverterULong.allocationSize(value.`spendOutputTotalKoinu`) +
+            FfiConverterULong.allocationSize(value.`changeAmountKoinu`) +
+            FfiConverterOptionalString.allocationSize(value.`changeAddress`) +
+            FfiConverterOptionalString.allocationSize(value.`changeScriptPubkeyHex`) +
+            FfiConverterULong.allocationSize(value.`feeKoinu`) +
+            FfiConverterULong.allocationSize(value.`estimatedSizeBytes`) +
+            FfiConverterOptionalULong.allocationSize(value.`actualSizeBytes`) +
+            FfiConverterBoolean.allocationSize(value.`dustChangeFoldedIntoFee`) +
+            FfiConverterString.allocationSize(value.`unsignedTxHex`) +
+            FfiConverterOptionalString.allocationSize(value.`signedTxHex`) +
+            FfiConverterOptionalTypeSigningEnvelope.allocationSize(value.`signingEnvelope`)
+    )
+
+    override fun write(value: ComposeTransactionResult, buf: ByteBuffer) {
+            FfiConverterTypeNetwork.write(value.`network`, buf)
+            FfiConverterSequenceTypeAuditedInput.write(value.`selectedInputs`, buf)
+            FfiConverterSequenceTypeSkippedInput.write(value.`skippedInputs`, buf)
+            FfiConverterULong.write(value.`inputTotalKoinu`, buf)
+            FfiConverterULong.write(value.`spendOutputTotalKoinu`, buf)
+            FfiConverterULong.write(value.`changeAmountKoinu`, buf)
+            FfiConverterOptionalString.write(value.`changeAddress`, buf)
+            FfiConverterOptionalString.write(value.`changeScriptPubkeyHex`, buf)
+            FfiConverterULong.write(value.`feeKoinu`, buf)
+            FfiConverterULong.write(value.`estimatedSizeBytes`, buf)
+            FfiConverterOptionalULong.write(value.`actualSizeBytes`, buf)
+            FfiConverterBoolean.write(value.`dustChangeFoldedIntoFee`, buf)
+            FfiConverterString.write(value.`unsignedTxHex`, buf)
+            FfiConverterOptionalString.write(value.`signedTxHex`, buf)
+            FfiConverterOptionalTypeSigningEnvelope.write(value.`signingEnvelope`, buf)
+    }
+}
+
+
+
 data class ExtendedKeyInfo (
     var `network`: Network
     ,
@@ -1287,6 +1579,44 @@ public object FfiConverterTypeExtendedKeyInfo: FfiConverterRustBuffer<ExtendedKe
             FfiConverterUInt.write(value.`childNumber`, buf)
             FfiConverterOptionalString.write(value.`publicKeyHex`, buf)
             FfiConverterBoolean.write(value.`privateKeyRedacted`, buf)
+    }
+}
+
+
+
+data class FeePolicy (
+    var `feeRateKoinuPerKb`: kotlin.ULong
+    ,
+    var `dustThresholdKoinu`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFeePolicy: FfiConverterRustBuffer<FeePolicy> {
+    override fun read(buf: ByteBuffer): FeePolicy {
+        return FeePolicy(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FeePolicy) = (
+            FfiConverterULong.allocationSize(value.`feeRateKoinuPerKb`) +
+            FfiConverterULong.allocationSize(value.`dustThresholdKoinu`)
+    )
+
+    override fun write(value: FeePolicy, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`feeRateKoinuPerKb`, buf)
+            FfiConverterULong.write(value.`dustThresholdKoinu`, buf)
     }
 }
 
@@ -1633,6 +1963,12 @@ data class SigningEnvelopeInput (
     var `redeemScriptHex`: kotlin.String?
     ,
     var `sighashType`: kotlin.UInt
+    ,
+    var `previousOutputValueKoinu`: kotlin.ULong?
+    ,
+    var `multisigThreshold`: kotlin.UByte?
+    ,
+    var `multisigPublicKeysHex`: List<kotlin.String>
 
 ){
 
@@ -1654,6 +1990,9 @@ public object FfiConverterTypeSigningEnvelopeInput: FfiConverterRustBuffer<Signi
             FfiConverterString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterUInt.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalUByte.read(buf),
+            FfiConverterSequenceString.read(buf),
         )
     }
 
@@ -1662,7 +2001,10 @@ public object FfiConverterTypeSigningEnvelopeInput: FfiConverterRustBuffer<Signi
             FfiConverterTypeSigningInputKind.allocationSize(value.`kind`) +
             FfiConverterString.allocationSize(value.`scriptPubkeyHex`) +
             FfiConverterOptionalString.allocationSize(value.`redeemScriptHex`) +
-            FfiConverterUInt.allocationSize(value.`sighashType`)
+            FfiConverterUInt.allocationSize(value.`sighashType`) +
+            FfiConverterOptionalULong.allocationSize(value.`previousOutputValueKoinu`) +
+            FfiConverterOptionalUByte.allocationSize(value.`multisigThreshold`) +
+            FfiConverterSequenceString.allocationSize(value.`multisigPublicKeysHex`)
     )
 
     override fun write(value: SigningEnvelopeInput, buf: ByteBuffer) {
@@ -1671,6 +2013,9 @@ public object FfiConverterTypeSigningEnvelopeInput: FfiConverterRustBuffer<Signi
             FfiConverterString.write(value.`scriptPubkeyHex`, buf)
             FfiConverterOptionalString.write(value.`redeemScriptHex`, buf)
             FfiConverterUInt.write(value.`sighashType`, buf)
+            FfiConverterOptionalULong.write(value.`previousOutputValueKoinu`, buf)
+            FfiConverterOptionalUByte.write(value.`multisigThreshold`, buf)
+            FfiConverterSequenceString.write(value.`multisigPublicKeysHex`, buf)
     }
 }
 
@@ -1714,6 +2059,281 @@ public object FfiConverterTypeSigningEnvelopeSignature: FfiConverterRustBuffer<S
             FfiConverterULong.write(value.`inputIndex`, buf)
             FfiConverterString.write(value.`publicKeyHex`, buf)
             FfiConverterString.write(value.`signatureHex`, buf)
+    }
+}
+
+
+
+data class SkippedInput (
+    var `txid`: kotlin.String
+    ,
+    var `vout`: kotlin.UInt
+    ,
+    var `previousOutputValueKoinu`: kotlin.ULong
+    ,
+    var `reason`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSkippedInput: FfiConverterRustBuffer<SkippedInput> {
+    override fun read(buf: ByteBuffer): SkippedInput {
+        return SkippedInput(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SkippedInput) = (
+            FfiConverterString.allocationSize(value.`txid`) +
+            FfiConverterUInt.allocationSize(value.`vout`) +
+            FfiConverterULong.allocationSize(value.`previousOutputValueKoinu`) +
+            FfiConverterString.allocationSize(value.`reason`)
+    )
+
+    override fun write(value: SkippedInput, buf: ByteBuffer) {
+            FfiConverterString.write(value.`txid`, buf)
+            FfiConverterUInt.write(value.`vout`, buf)
+            FfiConverterULong.write(value.`previousOutputValueKoinu`, buf)
+            FfiConverterString.write(value.`reason`, buf)
+    }
+}
+
+
+
+data class SpendableUtxo (
+    var `txid`: kotlin.String
+    ,
+    var `vout`: kotlin.UInt
+    ,
+    var `previousOutputValueKoinu`: kotlin.ULong
+    ,
+    var `scriptPubkeyHex`: kotlin.String
+    ,
+    var `kind`: SigningInputKind
+    ,
+    var `redeemScriptHex`: kotlin.String?
+    ,
+    var `multisigThreshold`: kotlin.UByte?
+    ,
+    var `multisigPublicKeysHex`: List<kotlin.String>
+    ,
+    var `signers`: List<UtxoSigner>
+    ,
+    var `manuallySelected`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpendableUtxo: FfiConverterRustBuffer<SpendableUtxo> {
+    override fun read(buf: ByteBuffer): SpendableUtxo {
+        return SpendableUtxo(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeSigningInputKind.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalUByte.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceTypeUtxoSigner.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpendableUtxo) = (
+            FfiConverterString.allocationSize(value.`txid`) +
+            FfiConverterUInt.allocationSize(value.`vout`) +
+            FfiConverterULong.allocationSize(value.`previousOutputValueKoinu`) +
+            FfiConverterString.allocationSize(value.`scriptPubkeyHex`) +
+            FfiConverterTypeSigningInputKind.allocationSize(value.`kind`) +
+            FfiConverterOptionalString.allocationSize(value.`redeemScriptHex`) +
+            FfiConverterOptionalUByte.allocationSize(value.`multisigThreshold`) +
+            FfiConverterSequenceString.allocationSize(value.`multisigPublicKeysHex`) +
+            FfiConverterSequenceTypeUtxoSigner.allocationSize(value.`signers`) +
+            FfiConverterBoolean.allocationSize(value.`manuallySelected`)
+    )
+
+    override fun write(value: SpendableUtxo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`txid`, buf)
+            FfiConverterUInt.write(value.`vout`, buf)
+            FfiConverterULong.write(value.`previousOutputValueKoinu`, buf)
+            FfiConverterString.write(value.`scriptPubkeyHex`, buf)
+            FfiConverterTypeSigningInputKind.write(value.`kind`, buf)
+            FfiConverterOptionalString.write(value.`redeemScriptHex`, buf)
+            FfiConverterOptionalUByte.write(value.`multisigThreshold`, buf)
+            FfiConverterSequenceString.write(value.`multisigPublicKeysHex`, buf)
+            FfiConverterSequenceTypeUtxoSigner.write(value.`signers`, buf)
+            FfiConverterBoolean.write(value.`manuallySelected`, buf)
+    }
+}
+
+
+
+data class TransactionOptions (
+    var `version`: kotlin.Int
+    ,
+    var `lockTime`: kotlin.UInt
+    ,
+    var `sequence`: kotlin.UInt
+    ,
+    var `sighashType`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTransactionOptions: FfiConverterRustBuffer<TransactionOptions> {
+    override fun read(buf: ByteBuffer): TransactionOptions {
+        return TransactionOptions(
+            FfiConverterInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TransactionOptions) = (
+            FfiConverterInt.allocationSize(value.`version`) +
+            FfiConverterUInt.allocationSize(value.`lockTime`) +
+            FfiConverterUInt.allocationSize(value.`sequence`) +
+            FfiConverterUInt.allocationSize(value.`sighashType`)
+    )
+
+    override fun write(value: TransactionOptions, buf: ByteBuffer) {
+            FfiConverterInt.write(value.`version`, buf)
+            FfiConverterUInt.write(value.`lockTime`, buf)
+            FfiConverterUInt.write(value.`sequence`, buf)
+            FfiConverterUInt.write(value.`sighashType`, buf)
+    }
+}
+
+
+
+data class TransactionOutput (
+    var `kind`: TransactionOutputKind
+    ,
+    var `valueKoinu`: kotlin.ULong
+    ,
+    var `address`: kotlin.String?
+    ,
+    var `opReturnDataHex`: kotlin.String?
+    ,
+    var `scriptHex`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTransactionOutput: FfiConverterRustBuffer<TransactionOutput> {
+    override fun read(buf: ByteBuffer): TransactionOutput {
+        return TransactionOutput(
+            FfiConverterTypeTransactionOutputKind.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TransactionOutput) = (
+            FfiConverterTypeTransactionOutputKind.allocationSize(value.`kind`) +
+            FfiConverterULong.allocationSize(value.`valueKoinu`) +
+            FfiConverterOptionalString.allocationSize(value.`address`) +
+            FfiConverterOptionalString.allocationSize(value.`opReturnDataHex`) +
+            FfiConverterOptionalString.allocationSize(value.`scriptHex`)
+    )
+
+    override fun write(value: TransactionOutput, buf: ByteBuffer) {
+            FfiConverterTypeTransactionOutputKind.write(value.`kind`, buf)
+            FfiConverterULong.write(value.`valueKoinu`, buf)
+            FfiConverterOptionalString.write(value.`address`, buf)
+            FfiConverterOptionalString.write(value.`opReturnDataHex`, buf)
+            FfiConverterOptionalString.write(value.`scriptHex`, buf)
+    }
+}
+
+
+
+data class UtxoSigner (
+    var `kind`: UtxoSignerKind
+    ,
+    var `wif`: kotlin.String?
+    ,
+    var `xpriv`: Xpriv?
+    ,
+    var `derivationPath`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeUtxoSigner: FfiConverterRustBuffer<UtxoSigner> {
+    override fun read(buf: ByteBuffer): UtxoSigner {
+        return UtxoSigner(
+            FfiConverterTypeUtxoSignerKind.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeXpriv.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: UtxoSigner) = (
+            FfiConverterTypeUtxoSignerKind.allocationSize(value.`kind`) +
+            FfiConverterOptionalString.allocationSize(value.`wif`) +
+            FfiConverterOptionalTypeXpriv.allocationSize(value.`xpriv`) +
+            FfiConverterOptionalString.allocationSize(value.`derivationPath`)
+    )
+
+    override fun write(value: UtxoSigner, buf: ByteBuffer) {
+            FfiConverterTypeUtxoSignerKind.write(value.`kind`, buf)
+            FfiConverterOptionalString.write(value.`wif`, buf)
+            FfiConverterOptionalTypeXpriv.write(value.`xpriv`, buf)
+            FfiConverterOptionalString.write(value.`derivationPath`, buf)
     }
 }
 
@@ -1840,6 +2460,42 @@ public object FfiConverterTypeXpub: FfiConverterRustBuffer<Xpub> {
             FfiConverterString.write(value.`encoded`, buf)
     }
 }
+
+
+
+
+enum class CoinSelectionStrategy {
+
+    MIN_INPUTS,
+    SMALLEST_FIRST,
+    LARGEST_FIRST,
+    MANUAL_SELECTED_INPUTS;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCoinSelectionStrategy: FfiConverterRustBuffer<CoinSelectionStrategy> {
+    override fun read(buf: ByteBuffer) = try {
+        CoinSelectionStrategy.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: CoinSelectionStrategy) = 4UL
+
+    override fun write(value: CoinSelectionStrategy, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -2017,6 +2673,139 @@ public object FfiConverterTypeSigningInputKind: FfiConverterRustBuffer<SigningIn
 
 
 
+enum class TransactionOutputKind {
+
+    ADDRESS,
+    OP_RETURN,
+    EXPERT_RAW_SCRIPT;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTransactionOutputKind: FfiConverterRustBuffer<TransactionOutputKind> {
+    override fun read(buf: ByteBuffer) = try {
+        TransactionOutputKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TransactionOutputKind) = 4UL
+
+    override fun write(value: TransactionOutputKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class UtxoSignerKind {
+
+    WIF,
+    XPRIV_DERIVATION;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeUtxoSignerKind: FfiConverterRustBuffer<UtxoSignerKind> {
+    override fun read(buf: ByteBuffer) = try {
+        UtxoSignerKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: UtxoSignerKind) = 4UL
+
+    override fun write(value: UtxoSignerKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalUByte: FfiConverterRustBuffer<kotlin.UByte?> {
+    override fun read(buf: ByteBuffer): kotlin.UByte? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUByte.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UByte?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUByte.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UByte?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUByte.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
+    override fun read(buf: ByteBuffer): kotlin.ULong? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterULong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ULong?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterULong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ULong?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterULong.write(value, buf)
+        }
+    }
+}
+
+
+
+
 /**
  * @suppress
  */
@@ -2052,6 +2841,102 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeChangeDestination: FfiConverterRustBuffer<ChangeDestination?> {
+    override fun read(buf: ByteBuffer): ChangeDestination? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeChangeDestination.read(buf)
+    }
+
+    override fun allocationSize(value: ChangeDestination?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeChangeDestination.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ChangeDestination?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeChangeDestination.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSigningEnvelope: FfiConverterRustBuffer<SigningEnvelope?> {
+    override fun read(buf: ByteBuffer): SigningEnvelope? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSigningEnvelope.read(buf)
+    }
+
+    override fun allocationSize(value: SigningEnvelope?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSigningEnvelope.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SigningEnvelope?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSigningEnvelope.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeXpriv: FfiConverterRustBuffer<Xpriv?> {
+    override fun read(buf: ByteBuffer): Xpriv? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeXpriv.read(buf)
+    }
+
+    override fun allocationSize(value: Xpriv?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeXpriv.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Xpriv?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeXpriv.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -2070,6 +2955,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAuditedInput: FfiConverterRustBuffer<List<AuditedInput>> {
+    override fun read(buf: ByteBuffer): List<AuditedInput> {
+        val len = buf.getInt()
+        return List<AuditedInput>(len) {
+            FfiConverterTypeAuditedInput.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AuditedInput>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAuditedInput.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AuditedInput>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAuditedInput.write(it, buf)
         }
     }
 }
@@ -2164,6 +3077,118 @@ public object FfiConverterSequenceTypeSigningEnvelopeSignature: FfiConverterRust
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeSkippedInput: FfiConverterRustBuffer<List<SkippedInput>> {
+    override fun read(buf: ByteBuffer): List<SkippedInput> {
+        val len = buf.getInt()
+        return List<SkippedInput>(len) {
+            FfiConverterTypeSkippedInput.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SkippedInput>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSkippedInput.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SkippedInput>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSkippedInput.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSpendableUtxo: FfiConverterRustBuffer<List<SpendableUtxo>> {
+    override fun read(buf: ByteBuffer): List<SpendableUtxo> {
+        val len = buf.getInt()
+        return List<SpendableUtxo>(len) {
+            FfiConverterTypeSpendableUtxo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SpendableUtxo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSpendableUtxo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SpendableUtxo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSpendableUtxo.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTransactionOutput: FfiConverterRustBuffer<List<TransactionOutput>> {
+    override fun read(buf: ByteBuffer): List<TransactionOutput> {
+        val len = buf.getInt()
+        return List<TransactionOutput>(len) {
+            FfiConverterTypeTransactionOutput.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TransactionOutput>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTransactionOutput.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TransactionOutput>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTransactionOutput.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeUtxoSigner: FfiConverterRustBuffer<List<UtxoSigner>> {
+    override fun read(buf: ByteBuffer): List<UtxoSigner> {
+        val len = buf.getInt()
+        return List<UtxoSigner>(len) {
+            FfiConverterTypeUtxoSigner.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<UtxoSigner>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeUtxoSigner.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<UtxoSigner>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeUtxoSigner.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     override fun read(buf: ByteBuffer): List<Xpub> {
         val len = buf.getInt()
@@ -2213,6 +3238,17 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(
 
         FfiConverterSequenceTypeSigningEnvelope.lower(`envelopes`),_status)
+}
+    )
+    }
+
+
+    @Throws(FfiException::class) fun `composeAndSignTransaction`(`request`: ComposeTransactionRequest): ComposeTransactionResult {
+            return FfiConverterTypeComposeTransactionResult.lift(
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(
+
+        FfiConverterTypeComposeTransactionRequest.lower(`request`),_status)
 }
     )
     }

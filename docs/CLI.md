@@ -33,7 +33,19 @@ Typical flow:
 
 `address derive` accepts `--xpub` or `--xpriv` plus a relative path (for example `m/0/0` for incoming, `m/1/0` for outgoing/change). It does not take a mnemonic directly.
 
-Subcommands cover mnemonic handling, account and path derivation, WIF import/export, address validation, message signing, P2PKH transaction signing, multisig envelopes, and more. See `easydoge-km --help`.
+Subcommands cover mnemonic handling, account and path derivation, WIF import/export, address validation, message signing, P2PKH transaction signing, compose-and-sign transaction building, multisig envelopes, and more. See `easydoge-km --help`.
+
+### Compose and sign a transaction
+
+`tx compose` reads a JSON request file and prints only the audited result. The request may contain WIFs or xprivs, so do not log request files or shell history that includes them.
+
+```sh
+easydoge-km --json tx compose --request-file compose-request.json
+```
+
+The request uses the same shape as the Rust `ComposeTransactionRequest`: UTXOs use display/RPC txid hex, values are integer koinu, fee policy is `fee_rate_koinu_per_kb` plus `dust_threshold_koinu`, and transaction sizes are serialized bytes. Outputs can be Dogecoin address outputs, zero-value OP_RETURN data outputs, or `ExpertRawScript` outputs.
+
+The result includes selected inputs, skipped inputs, totals, fee, change details, estimated size, actual signed size when complete, unsigned tx hex, signed tx hex when all signatures are present, or a signing envelope when more multisig signatures are needed.
 
 ### Parity test vector
 

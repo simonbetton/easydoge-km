@@ -4,6 +4,7 @@ mod message;
 mod multisig;
 mod network;
 mod signing;
+mod transaction_builder;
 
 pub use keys::{
     account_xpriv_from_mnemonic, address_from_wif, derive_address_from_xpriv,
@@ -19,6 +20,11 @@ pub use signing::{
     combine_signing_envelopes, finalize_signing_envelope, sign_p2pkh_transaction,
     sign_signing_envelope, SignedTransaction, SigningEnvelope, SigningEnvelopeInput,
     SigningEnvelopeSignature, SigningInputKind,
+};
+pub use transaction_builder::{
+    compose_and_sign_transaction, AuditedInput, ChangeDestination, CoinSelectionStrategy,
+    ComposeTransactionRequest, ComposeTransactionResult, FeePolicy, SkippedInput, SpendableUtxo,
+    TransactionOptions, TransactionOutput, TransactionOutputKind, UtxoSigner, UtxoSignerKind,
 };
 
 #[derive(Debug, thiserror::Error)]
