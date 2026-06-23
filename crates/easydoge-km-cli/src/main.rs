@@ -626,9 +626,14 @@ fn handle_message(command: MessageCommand, json: bool, reveal: bool) -> Result<(
 fn run_tui() -> Result<()> {
     let mut app = TuiApp::new();
     let mut terminal = ratatui::init();
-    crossterm::execute!(io::stdout(), EnableBracketedPaste)
-        .context("enable terminal paste events")?;
-    let result = loop {
+    if let Err(error) = crossterm::execute!(io::stdout(), EnableBracketedPaste)
+        .context("enable terminal paste events")
+    {
+        ratatui::restore();
+        return Err(error);
+    }
+
+    let result: Result<()> = loop {
         terminal
             .draw(|frame| {
                 render_tui(frame, &app);
@@ -645,10 +650,11 @@ fn run_tui() -> Result<()> {
             _ => {}
         }
     };
-    crossterm::execute!(io::stdout(), DisableBracketedPaste)
-        .context("disable terminal paste events")?;
+    let cleanup_result = crossterm::execute!(io::stdout(), DisableBracketedPaste)
+        .context("disable terminal paste events");
     ratatui::restore();
-    result
+    result?;
+    cleanup_result
 }
 
 fn render_tui(frame: &mut ratatui::Frame<'_>, app: &TuiApp) {
@@ -1191,27 +1197,35 @@ fn handle_tui_home_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
             let valid = validate_mnemonic(TUI_SAMPLE_PHRASE, Language::English)?;
             app.status = format!("Sample mnemonic valid: {valid}");
         }
-        KeyCode::Char('i') => {
-            app.incoming_address = Some(derive_tui_address(app, TuiAddressBranch::Incoming)?);
-            app.status = format!(
-                "Created incoming address for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
-        KeyCode::Char('o') => {
-            app.outgoing_address = Some(derive_tui_address(app, TuiAddressBranch::Outgoing)?);
-            app.status = format!(
-                "Created outgoing address for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
-        KeyCode::Char('d') => {
-            derive_tui_addresses(app)?;
-            app.status = format!(
-                "Created incoming and outgoing addresses for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
+        KeyCode::Char('i') => match derive_tui_address(app, TuiAddressBranch::Incoming) {
+            Ok(address) => {
+                app.incoming_address = Some(address);
+                app.status = format!(
+                    "Created incoming address for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        KeyCode::Char('o') => match derive_tui_address(app, TuiAddressBranch::Outgoing) {
+            Ok(address) => {
+                app.outgoing_address = Some(address);
+                app.status = format!(
+                    "Created outgoing address for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        KeyCode::Char('d') => match derive_tui_addresses(app) {
+            Ok(()) => {
+                app.status = format!(
+                    "Created incoming and outgoing addresses for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
         KeyCode::Char('n') => {
             app.address_index = app.address_index.saturating_add(1);
             app.clear_addresses();
@@ -1225,16 +1239,26 @@ fn handle_tui_home_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
             app.status = format!("Address index set to {}.", app.address_index);
         }
         KeyCode::Char('a') => {
-            app.account = app.account.saturating_add(1);
-            app.clear_addresses();
-            refresh_tui_derivations(app)?;
-            app.status = format!("Account set to {}.", app.account);
+            if tui_account_can_change(app) {
+                app.account = app.account.saturating_add(1);
+                app.clear_addresses();
+                refresh_tui_derivations(app)?;
+                app.status = format!("Account set to {}.", app.account);
+            } else {
+                app.status =
+                    "Account control applies only to seed phrases and master xprivs.".to_owned();
+            }
         }
         KeyCode::Char('z') => {
-            app.account = app.account.saturating_sub(1);
-            app.clear_addresses();
-            refresh_tui_derivations(app)?;
-            app.status = format!("Account set to {}.", app.account);
+            if tui_account_can_change(app) {
+                app.account = app.account.saturating_sub(1);
+                app.clear_addresses();
+                refresh_tui_derivations(app)?;
+                app.status = format!("Account set to {}.", app.account);
+            } else {
+                app.status =
+                    "Account control applies only to seed phrases and master xprivs.".to_owned();
+            }
         }
         _ => {}
     }
@@ -1307,7 +1331,13 @@ fn submit_tui_pasted_material(app: &mut TuiApp) -> Result<()> {
         return Ok(());
     }
 
-    let material = classify_tui_non_mnemonic(&input)?;
+    let material = match classify_tui_non_mnemonic(&input) {
+        Ok(material) => material,
+        Err(error) => {
+            app.status = error.to_string();
+            return Ok(());
+        }
+    };
     app.clear_input();
     set_tui_inspected_material(app, material)?;
     Ok(())
@@ -1342,31 +1372,43 @@ fn submit_tui_mnemonic_passphrase(app: &mut TuiApp) -> Result<()> {
 }
 
 fn set_tui_inspected_material(app: &mut TuiApp, material: TuiInspectedMaterial) -> Result<()> {
+    let fixed_account = tui_material_fixed_account(&material);
     app.inspected_material = Some(material);
+    if let Some(account) = fixed_account {
+        app.account = account;
+    }
     app.generated_secret = None;
     app.mode = TuiMode::InspectResult;
     app.clear_addresses();
     refresh_tui_derivations(app)?;
-    app.status = format!("Inspected {}.", active_source_label(app));
+    app.status = if let Some(message) = app
+        .inspected_material
+        .as_ref()
+        .and_then(unsupported_tui_derivation_message)
+    {
+        format!("Inspected {}. {message}", active_source_label(app))
+    } else {
+        format!("Inspected {}.", active_source_label(app))
+    };
     Ok(())
 }
 
 fn refresh_tui_derivations(app: &mut TuiApp) -> Result<()> {
-    if matches!(
-        app.inspected_material,
-        Some(TuiInspectedMaterial::Address { .. } | TuiInspectedMaterial::Wif { .. })
-    ) {
-        return Ok(());
-    }
-    if app.inspected_material.is_some() {
+    if app
+        .inspected_material
+        .as_ref()
+        .is_some_and(tui_material_supports_derivations)
+    {
         derive_tui_addresses(app)?;
     }
     Ok(())
 }
 
 fn derive_tui_addresses(app: &mut TuiApp) -> Result<()> {
-    app.incoming_address = Some(derive_tui_address(app, TuiAddressBranch::Incoming)?);
-    app.outgoing_address = Some(derive_tui_address(app, TuiAddressBranch::Outgoing)?);
+    let incoming = derive_tui_address(app, TuiAddressBranch::Incoming)?;
+    let outgoing = derive_tui_address(app, TuiAddressBranch::Outgoing)?;
+    app.incoming_address = Some(incoming);
+    app.outgoing_address = Some(outgoing);
     Ok(())
 }
 
@@ -1411,24 +1453,15 @@ fn derive_inspected_tui_address(
             branch,
         ),
         TuiInspectedMaterial::Xpriv { xpriv, info, .. } => {
-            let path = if info.depth == 0 {
-                format!(
-                    "m/44'/3'/{}'/{}/{}",
-                    app.account,
-                    branch.path_component(),
-                    app.address_index
-                )
-            } else {
-                format!("m/{}/{}", branch.path_component(), app.address_index)
-            };
+            let path = tui_xpriv_derivation_path(app, info, branch)?;
             let address = derive_address_from_xpriv(xpriv, &path)?;
             Ok(TuiDerivedAddress {
                 path,
                 address: address.address,
             })
         }
-        TuiInspectedMaterial::Xpub { xpub, .. } => {
-            let path = format!("m/{}/{}", branch.path_component(), app.address_index);
+        TuiInspectedMaterial::Xpub { xpub, info } => {
+            let path = tui_xpub_derivation_path(app, info, branch)?;
             let address = derive_address_from_xpub(xpub, &path)?;
             Ok(TuiDerivedAddress {
                 path,
@@ -1439,6 +1472,98 @@ fn derive_inspected_tui_address(
             "address derivation does not apply to the inspected material"
         )),
     }
+}
+
+fn tui_material_supports_derivations(material: &TuiInspectedMaterial) -> bool {
+    match material {
+        TuiInspectedMaterial::Mnemonic { .. } => true,
+        TuiInspectedMaterial::Xpriv { info, .. } => matches!(info.depth, 0 | 3),
+        TuiInspectedMaterial::Xpub { info, .. } => info.depth == 3,
+        TuiInspectedMaterial::Address { .. } | TuiInspectedMaterial::Wif { .. } => false,
+    }
+}
+
+fn tui_account_can_change(app: &TuiApp) -> bool {
+    match &app.inspected_material {
+        Some(TuiInspectedMaterial::Xpriv { info, .. }) => info.depth == 0,
+        Some(TuiInspectedMaterial::Xpub { .. })
+        | Some(TuiInspectedMaterial::Address { .. })
+        | Some(TuiInspectedMaterial::Wif { .. }) => false,
+        Some(TuiInspectedMaterial::Mnemonic { .. }) | None => true,
+    }
+}
+
+fn tui_material_fixed_account(material: &TuiInspectedMaterial) -> Option<u32> {
+    match material {
+        TuiInspectedMaterial::Xpriv { info, .. } | TuiInspectedMaterial::Xpub { info, .. } => {
+            account_from_extended_key_info(info)
+        }
+        TuiInspectedMaterial::Mnemonic { .. }
+        | TuiInspectedMaterial::Address { .. }
+        | TuiInspectedMaterial::Wif { .. } => None,
+    }
+}
+
+fn account_from_extended_key_info(info: &ExtendedKeyInfo) -> Option<u32> {
+    const HARDENED_CHILD_OFFSET: u32 = 1 << 31;
+
+    if info.depth == 3 && info.child_number >= HARDENED_CHILD_OFFSET {
+        Some(info.child_number - HARDENED_CHILD_OFFSET)
+    } else {
+        None
+    }
+}
+
+fn unsupported_tui_derivation_message(material: &TuiInspectedMaterial) -> Option<&'static str> {
+    match material {
+        TuiInspectedMaterial::Xpriv { info, .. } if !matches!(info.depth, 0 | 3) => {
+            Some("Address derivation requires a master or account-level xpriv.")
+        }
+        TuiInspectedMaterial::Xpub { info, .. } if info.depth != 3 => {
+            Some("Address derivation requires an account-level xpub.")
+        }
+        _ => None,
+    }
+}
+
+fn tui_xpriv_derivation_path(
+    app: &TuiApp,
+    info: &ExtendedKeyInfo,
+    branch: TuiAddressBranch,
+) -> Result<String> {
+    match info.depth {
+        0 => Ok(format!(
+            "m/44'/3'/{}'/{}/{}",
+            app.account,
+            branch.path_component(),
+            app.address_index
+        )),
+        3 => Ok(format!(
+            "m/{}/{}",
+            branch.path_component(),
+            app.address_index
+        )),
+        _ => Err(anyhow!(
+            "Address derivation requires a master or account-level xpriv."
+        )),
+    }
+}
+
+fn tui_xpub_derivation_path(
+    app: &TuiApp,
+    info: &ExtendedKeyInfo,
+    branch: TuiAddressBranch,
+) -> Result<String> {
+    if info.depth != 3 {
+        return Err(anyhow!(
+            "Address derivation requires an account-level xpub."
+        ));
+    }
+    Ok(format!(
+        "m/{}/{}",
+        branch.path_component(),
+        app.address_index
+    ))
 }
 
 fn derive_mnemonic_tui_address(
@@ -1695,6 +1820,7 @@ fn read_compose_request(path: &str) -> Result<ComposeTransactionRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use easydoge_km::derive_path_from_xpub;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
@@ -1850,6 +1976,18 @@ mod tests {
     }
 
     #[test]
+    fn tui_invalid_paste_keeps_input_editable() -> Result<()> {
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, "not wallet material")?;
+
+        assert_eq!(app.mode, TuiMode::PasteInput);
+        assert_eq!(app.input_buffer, "not wallet material");
+        assert!(app.status.contains("Could not classify pasted material"));
+        Ok(())
+    }
+
+    #[test]
     fn tui_paste_seed_phrase_uses_optional_passphrase_for_derivation() -> Result<()> {
         let mut app = TuiApp::new();
 
@@ -1903,6 +2041,57 @@ mod tests {
         handle_tui_key(&mut app, KeyCode::Char('n'))?;
         assert_eq!(app.address_index, 1);
         assert_eq!(app.incoming_address.as_ref().unwrap().path, "m/0/1");
+        Ok(())
+    }
+
+    #[test]
+    fn tui_account_xpub_uses_fixed_account_metadata() -> Result<()> {
+        let account = account_xpriv_from_mnemonic(
+            TUI_SAMPLE_PHRASE,
+            Some("TREZOR"),
+            Language::English,
+            Network::Mainnet,
+            7,
+        )?;
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, &account.xpub.encoded)?;
+
+        assert_eq!(app.account, 7);
+        assert!(app.incoming_address.is_some());
+
+        handle_tui_key(&mut app, KeyCode::Char('a'))?;
+        assert_eq!(app.account, 7);
+        assert!(app.status.contains("master xprivs"));
+        Ok(())
+    }
+
+    #[test]
+    fn tui_branch_xpub_inspects_without_misleading_derivation() -> Result<()> {
+        let account = account_xpriv_from_mnemonic(
+            TUI_SAMPLE_PHRASE,
+            Some("TREZOR"),
+            Language::English,
+            Network::Mainnet,
+            0,
+        )?;
+        let branch_xpub = derive_path_from_xpub(&account.xpub, "m/0")?;
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, &branch_xpub.encoded)?;
+
+        assert_eq!(app.mode, TuiMode::InspectResult);
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Xpub { .. })
+        ));
+        assert!(app.incoming_address.is_none());
+        assert!(app.outgoing_address.is_none());
+        assert!(app.status.contains("account-level xpub"));
+
+        handle_tui_key(&mut app, KeyCode::Char('i'))?;
+        assert!(app.status.contains("account-level xpub"));
+        assert!(app.incoming_address.is_none());
         Ok(())
     }
 
