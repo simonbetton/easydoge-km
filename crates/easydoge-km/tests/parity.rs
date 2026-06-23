@@ -1,12 +1,13 @@
 use bitcoin::hashes::{hash160, Hash};
 use easydoge_km::{
     account_xpriv_from_mnemonic, compose_and_sign_transaction, create_multisig_descriptor,
-    derive_address_from_xpriv, derive_address_from_xpub, finalize_signing_envelope, inspect_xpriv,
-    mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction, validate_mnemonic, verify_message,
-    wif_from_xpriv, ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy,
-    Language, Network, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
-    SigningInputKind, SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind,
-    UtxoSigner, UtxoSignerKind,
+    derive_address_from_xpriv, derive_address_from_xpub, finalize_signing_envelope,
+    inspect_address, inspect_xpriv, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
+    validate_mnemonic, verify_message, wif_from_xpriv, AddressKind, ChangeDestination,
+    CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy, Language, Network,
+    SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
+    SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind, UtxoSigner,
+    UtxoSignerKind,
 };
 use serde_json::Value;
 
@@ -91,6 +92,25 @@ fn xpriv_inspection_does_not_expose_private_key_material() {
     assert!(info.private_key_redacted);
     let public_key_hex = info.public_key_hex.unwrap();
     assert!(public_key_hex.starts_with("02") || public_key_hex.starts_with("03"));
+}
+
+#[test]
+fn address_inspection_reports_matching_networks_and_kinds() {
+    let vectors = vectors();
+    let receive = vectors["mnemonic"]["receive"]["address"].as_str().unwrap();
+    let receive_info = inspect_address(receive).unwrap();
+    assert_eq!(receive_info.len(), 1);
+    assert_eq!(receive_info[0].network, Network::Mainnet);
+    assert_eq!(receive_info[0].kind, AddressKind::P2pkh);
+    assert_eq!(receive_info[0].payload_hex.len(), 40);
+
+    let p2sh = vectors["multisig"]["p2sh_address"].as_str().unwrap();
+    let p2sh_info = inspect_address(p2sh).unwrap();
+    assert_eq!(p2sh_info.len(), 1);
+    assert_eq!(p2sh_info[0].network, Network::Mainnet);
+    assert_eq!(p2sh_info[0].kind, AddressKind::P2sh);
+
+    assert!(inspect_address("not an address").unwrap().is_empty());
 }
 
 #[test]

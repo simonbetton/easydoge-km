@@ -77,6 +77,28 @@ easydoge-km tui
 
 Press `q` or `Esc` to quit.
 
+### Paste inspector
+
+Press `/` to enter paste mode. You can paste or type:
+
+- Dogecoin addresses
+- BIP39 seed phrases
+- Extended private keys
+- Extended public keys
+- WIF private keys
+
+The TUI does not echo unclassified input because it may contain secret material. Press `Enter` to inspect, `Backspace` to edit, or `Esc` to cancel.
+
+Seed phrases move through a second passphrase prompt before deriving keys. Leave the passphrase empty and press `Enter` for a normal no-passphrase BIP39 seed, or type/paste the optional BIP39 passphrase first.
+
+Inspector results are redacted by default:
+
+- Seed phrases, xprivs, and WIFs are never shown unless reveal is enabled where the TUI supports revealing that value.
+- Xpubs, public keys, addresses, networks, depths, child numbers, and address payload hashes are shown because they are public metadata.
+- Address inspection reports every matching Dogecoin network and address kind (`p2pkh` or `p2sh`). Testnet and regtest may both match the same P2SH prefix.
+
+When pasted material can derive addresses, the TUI derives both incoming and outgoing/change addresses immediately for the current account and index. Changing account or index refreshes inspected derivations where applicable.
+
 ### Mnemonic source
 
 Address creation does not require generating a mnemonic first. The TUI picks its seed material as follows:
@@ -106,9 +128,10 @@ Addresses from sample mode are deterministic and publicly known test material. D
 
 | Key | Action |
 | --- | --- |
+| `/` | Paste or type material to inspect |
 | `g` | Generate a new mnemonic |
 | `v` | Validate the parity sample phrase |
-| `r` | Toggle reveal for the generated mnemonic |
+| `r` | Toggle reveal for secret material |
 | `i` | Create incoming address (`…/0/{index}`) |
 | `o` | Create outgoing/change address (`…/1/{index}`) |
 | `d` | Create both incoming and outgoing addresses |

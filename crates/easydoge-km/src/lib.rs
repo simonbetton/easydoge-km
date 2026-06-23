@@ -9,9 +9,10 @@ mod transaction_builder;
 pub use keys::{
     account_xpriv_from_mnemonic, address_from_wif, derive_address_from_xpriv,
     derive_address_from_xpub, derive_path_from_xpriv, derive_path_from_xpub, generate_mnemonic,
-    inspect_xpriv, inspect_xpub, mnemonic_to_seed_hex, validate_address, validate_mnemonic,
-    wif_from_xpriv, xpub_from_xpriv, AccountKeySet, ExtendedKeyInfo, GeneratedMnemonic, Language,
-    MnemonicOptions, PathAddress, WifInfo, Xpriv, Xpub,
+    inspect_address, inspect_xpriv, inspect_xpub, mnemonic_to_seed_hex, validate_address,
+    validate_mnemonic, wif_from_xpriv, xpub_from_xpriv, AccountKeySet, AddressInfo, AddressKind,
+    ExtendedKeyInfo, GeneratedMnemonic, Language, MnemonicOptions, PathAddress, WifInfo, Xpriv,
+    Xpub,
 };
 pub use message::{sign_message, verify_message, MessageSignature};
 pub use multisig::{create_multisig_descriptor, MultisigDescriptor};

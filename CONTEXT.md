@@ -24,6 +24,18 @@ A hardened Dogecoin BIP44 branch used as the parent for receive and change addre
 
 A network-specific Dogecoin destination string derived from public key or script material.
 
+## Address Kind
+
+The legacy Dogecoin script family identified from an address prefix, currently P2PKH or P2SH.
+
+## Pasted Material
+
+User-provided wallet or address text inspected by the TUI, such as an Address, Seed Phrase, Extended Private Key, Extended Public Key, or WIF.
+
+## Inspector Result
+
+The classified, redacted view of Pasted Material plus any metadata or derived addresses the SDK can safely show.
+
 ## Watch-only Derivation
 
 Address derivation from public extended key material without access to private keys.
