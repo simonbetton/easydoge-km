@@ -4,6 +4,12 @@ All notable changes to EasyDoge KM will be documented here.
 
 The project uses semantic versioning for public APIs once it reaches `1.0.0`. During `0.x`, minor versions may include breaking changes.
 
+## [Unreleased]
+
+### Added
+
+- Added a Ratatui paste inspector for Dogecoin addresses, seed phrases, extended keys, and WIFs.
+
 ## 0.1.0 - 2026-06-04
 
 - Added Rust core Dogecoin key-management SDK.

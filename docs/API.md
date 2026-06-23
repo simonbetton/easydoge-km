@@ -27,6 +27,7 @@ Dogecoin-native xpriv/xpub version bytes are emitted by default. Legacy Bitcoin-
 | Export WIF from xpriv | yes | yes | yes | yes | yes |
 | Import WIF and derive address | yes | yes | yes | yes | yes |
 | Validate address | yes | yes | yes | yes | yes |
+| Inspect address network/kind | yes | no | no | no | TUI |
 | Sign and verify messages | yes | yes | yes | yes | yes |
 | Sign P2PKH transactions | yes | yes | yes | yes | yes |
 | Signing envelopes | yes | yes | yes | yes | yes |

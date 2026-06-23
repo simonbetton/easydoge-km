@@ -55,6 +55,20 @@ pub struct PathAddress {
     pub address: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AddressKind {
+    P2pkh,
+    P2sh,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddressInfo {
+    pub network: Network,
+    pub kind: AddressKind,
+    pub payload_hex: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedKeyInfo {
     pub network: Network,
@@ -307,6 +321,38 @@ pub fn validate_address(network: Network, address: &str) -> Result<bool> {
     let prefix = data[0];
     let prefixes = network.prefixes();
     Ok(prefix == prefixes.p2pkh || prefix == prefixes.p2sh)
+}
+
+pub fn inspect_address(address: &str) -> Result<Vec<AddressInfo>> {
+    let data = match base58check_decode(address) {
+        Ok(data) => data,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if data.len() != 21 {
+        return Ok(Vec::new());
+    }
+
+    let prefix = data[0];
+    let payload_hex = hex::encode(&data[1..]);
+    let mut matches = Vec::new();
+    for network in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+        let prefixes = network.prefixes();
+        let kind = if prefix == prefixes.p2pkh {
+            Some(AddressKind::P2pkh)
+        } else if prefix == prefixes.p2sh {
+            Some(AddressKind::P2sh)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            matches.push(AddressInfo {
+                network,
+                kind,
+                payload_hex: payload_hex.clone(),
+            });
+        }
+    }
+    Ok(matches)
 }
 
 pub fn inspect_xpriv(xpriv: &Xpriv) -> Result<ExtendedKeyInfo> {

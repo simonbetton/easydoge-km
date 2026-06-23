@@ -1,14 +1,14 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode};
 use easydoge_km::{
     account_xpriv_from_mnemonic, address_from_wif, combine_signing_envelopes,
     compose_and_sign_transaction, derive_address_from_xpriv, derive_address_from_xpub,
-    derive_path_from_xpriv, finalize_signing_envelope, generate_mnemonic, inspect_xpriv,
-    inspect_xpub, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
+    derive_path_from_xpriv, finalize_signing_envelope, generate_mnemonic, inspect_address,
+    inspect_xpriv, inspect_xpub, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
     sign_signing_envelope, validate_address, validate_mnemonic, verify_message, wif_from_xpriv,
-    xpub_from_xpriv, ComposeTransactionRequest, Language, MnemonicOptions, Network,
-    SigningEnvelope, Xpriv, Xpub,
+    xpub_from_xpriv, AddressInfo, AddressKind, ComposeTransactionRequest, ExtendedKeyInfo,
+    Language, MnemonicOptions, Network, SigningEnvelope, WifInfo, Xpriv, Xpub,
 };
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -626,21 +626,35 @@ fn handle_message(command: MessageCommand, json: bool, reveal: bool) -> Result<(
 fn run_tui() -> Result<()> {
     let mut app = TuiApp::new();
     let mut terminal = ratatui::init();
-    let result = loop {
+    if let Err(error) = crossterm::execute!(io::stdout(), EnableBracketedPaste)
+        .context("enable terminal paste events")
+    {
+        ratatui::restore();
+        return Err(error);
+    }
+
+    let result: Result<()> = loop {
         terminal
             .draw(|frame| {
                 render_tui(frame, &app);
             })
             .context("draw Ratatui frame")?;
 
-        if let Event::Key(key) = event::read().context("read terminal event")? {
-            if handle_tui_key(&mut app, key.code)? {
-                break Ok(());
+        match event::read().context("read terminal event")? {
+            Event::Key(key) => {
+                if handle_tui_key(&mut app, key.code)? {
+                    break Ok(());
+                }
             }
+            Event::Paste(contents) => handle_tui_paste(&mut app, &contents)?,
+            _ => {}
         }
     };
+    let cleanup_result = crossterm::execute!(io::stdout(), DisableBracketedPaste)
+        .context("disable terminal paste events");
     ratatui::restore();
-    result
+    result?;
+    cleanup_result
 }
 
 fn render_tui(frame: &mut ratatui::Frame<'_>, app: &TuiApp) {
@@ -691,55 +705,7 @@ fn render_tui(frame: &mut ratatui::Frame<'_>, app: &TuiApp) {
     } else {
         "Reveal generated mnemonic"
     };
-    let question = vec![
-        Line::from(vec![Span::styled(
-            "What would you like to do?",
-            question_style(),
-        )]),
-        Line::from(vec![
-            key_span("g"),
-            Span::raw(" Generate mnemonic"),
-            Span::raw("    "),
-            key_span("v"),
-            Span::raw(" Validate sample"),
-            Span::raw("    "),
-            key_span("r"),
-            Span::raw(format!(" {reveal_label}")),
-        ]),
-        Line::from(vec![key_span("i"), Span::raw(" Create incoming address")]),
-        Line::from(vec![
-            key_span("o"),
-            Span::raw(" Create outgoing/change address"),
-        ]),
-        Line::from(vec![
-            key_span("d"),
-            Span::raw(" Create both addresses"),
-            Span::raw("    "),
-            key_span("a"),
-            Span::raw("/"),
-            key_span("z"),
-            Span::raw(" Account +/-"),
-            Span::raw("    "),
-            key_span("n"),
-            Span::raw("/"),
-            key_span("p"),
-            Span::raw(" Index +/-"),
-        ]),
-        Line::from(vec![
-            Span::styled("Using ", muted_style()),
-            Span::styled(
-                if app.generated_secret.is_some() {
-                    "generated mnemonic"
-                } else {
-                    "sample mnemonic"
-                },
-                accent_style(),
-            ),
-            Span::styled(" for derivations. Press ", muted_style()),
-            key_span("q"),
-            Span::styled(" to quit.", muted_style()),
-        ]),
-    ];
+    let question = tui_question_lines(app, reveal_label);
     frame.render_widget(
         Paragraph::new(question)
             .block(
@@ -752,16 +718,310 @@ fn render_tui(frame: &mut ratatui::Frame<'_>, app: &TuiApp) {
         chunks[1],
     );
 
-    let source_line = if app.generated_secret.is_some() {
-        "generated mnemonic"
-    } else {
-        "sample mnemonic"
-    };
-    let secret_line = match (&app.generated_secret, app.reveal) {
-        (Some(secret), true) => secret.as_str(),
-        (Some(_), false) => "[redacted]",
-        (None, _) => "No generated mnemonic yet",
-    };
+    let body = tui_answer_lines(app);
+    frame.render_widget(
+        Paragraph::new(body)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray))
+                    .title(Span::styled(" Answer ", title_style())),
+            )
+            .wrap(Wrap { trim: false }),
+        chunks[2],
+    );
+}
+
+fn tui_question_lines(app: &TuiApp, reveal_label: &str) -> Vec<Line<'static>> {
+    match app.mode {
+        TuiMode::PasteInput => vec![
+            Line::from(vec![Span::styled(
+                "Paste or type an address, seed phrase, xpriv, xpub, or WIF.",
+                question_style(),
+            )]),
+            Line::from(vec![
+                key_span("Enter"),
+                Span::raw(" Inspect"),
+                Span::raw("    "),
+                key_span("Backspace"),
+                Span::raw(" Delete"),
+                Span::raw("    "),
+                key_span("Esc"),
+                Span::raw(" Cancel"),
+            ]),
+            Line::from(vec![
+                Span::styled("Buffered input: ", muted_style()),
+                Span::styled(
+                    format!("{} chars", app.input_buffer.chars().count()),
+                    value_style(),
+                ),
+            ]),
+            Line::from(vec![Span::styled(
+                "Input is not echoed until it has been classified, because it may be secret.",
+                muted_style(),
+            )]),
+        ],
+        TuiMode::PassphraseInput => vec![
+            Line::from(vec![Span::styled(
+                "Seed phrase detected. Enter an optional BIP39 passphrase.",
+                question_style(),
+            )]),
+            Line::from(vec![
+                key_span("Enter"),
+                Span::raw(" Continue"),
+                Span::raw("    "),
+                key_span("Backspace"),
+                Span::raw(" Delete"),
+                Span::raw("    "),
+                key_span("Esc"),
+                Span::raw(" Cancel"),
+            ]),
+            Line::from(vec![
+                Span::styled("Passphrase: ", muted_style()),
+                Span::styled(
+                    if app.passphrase_buffer.is_empty() {
+                        "[empty]"
+                    } else {
+                        "[redacted]"
+                    },
+                    value_style(),
+                ),
+            ]),
+        ],
+        TuiMode::Home | TuiMode::InspectResult => vec![
+            Line::from(vec![Span::styled(
+                "What would you like to do?",
+                question_style(),
+            )]),
+            Line::from(vec![
+                key_span("/"),
+                Span::raw(" Paste/inspect"),
+                Span::raw("    "),
+                key_span("g"),
+                Span::raw(" Generate mnemonic"),
+                Span::raw("    "),
+                key_span("v"),
+                Span::raw(" Validate sample"),
+                Span::raw("    "),
+                key_span("r"),
+                Span::raw(format!(" {reveal_label}")),
+            ]),
+            Line::from(vec![
+                key_span("i"),
+                Span::raw(" Create incoming address"),
+                Span::raw("    "),
+                key_span("o"),
+                Span::raw(" Create outgoing/change address"),
+            ]),
+            Line::from(vec![
+                key_span("d"),
+                Span::raw(" Create both addresses"),
+                Span::raw("    "),
+                key_span("a"),
+                Span::raw("/"),
+                key_span("z"),
+                Span::raw(" Account +/-"),
+                Span::raw("    "),
+                key_span("n"),
+                Span::raw("/"),
+                key_span("p"),
+                Span::raw(" Index +/-"),
+            ]),
+            Line::from(vec![
+                Span::styled("Using ", muted_style()),
+                Span::styled(active_source_label(app), accent_style()),
+                Span::styled(" for derivations. Press ", muted_style()),
+                key_span("q"),
+                Span::styled(" to quit.", muted_style()),
+            ]),
+        ],
+    }
+}
+
+fn tui_answer_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(app.status.clone(), status_style(app.status.as_str())),
+        ]),
+        Line::from(vec![
+            label_span("Source: "),
+            Span::raw(active_source_label(app)),
+            Span::raw("   "),
+            label_span("Account: "),
+            Span::styled(app.account.to_string(), value_style()),
+            Span::raw("   "),
+            label_span("Index: "),
+            Span::styled(app.address_index.to_string(), value_style()),
+            Span::raw("   "),
+            label_span("Reveal: "),
+            Span::styled(if app.reveal { "on" } else { "off" }, value_style()),
+        ]),
+    ];
+
+    append_material_lines(app, &mut lines);
+    append_address_lines(app, &mut lines);
+    lines
+}
+
+fn append_material_lines(app: &TuiApp, lines: &mut Vec<Line<'static>>) {
+    match &app.inspected_material {
+        Some(TuiInspectedMaterial::Mnemonic {
+            phrase,
+            passphrase,
+            language,
+            word_count,
+            account_xpub,
+        }) => {
+            lines.push(Line::from(vec![
+                label_span("Material: "),
+                Span::raw("seed phrase"),
+                Span::raw("   "),
+                label_span("Language: "),
+                Span::styled(language_label(*language), value_style()),
+                Span::raw("   "),
+                label_span("Words: "),
+                Span::styled(word_count.to_string(), value_style()),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("Seed phrase: "),
+                Span::raw(if app.reveal {
+                    phrase.clone()
+                } else {
+                    "[redacted]".to_owned()
+                }),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("Passphrase: "),
+                Span::raw(if let Some(passphrase) = passphrase {
+                    if app.reveal {
+                        passphrase.clone()
+                    } else {
+                        "[redacted]".to_owned()
+                    }
+                } else {
+                    "[empty]".to_owned()
+                }),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("Account xpub: "),
+                Span::raw(account_xpub.clone()),
+            ]));
+        }
+        Some(TuiInspectedMaterial::Xpriv { info, xpub, .. }) => {
+            append_extended_key_lines(lines, "extended private key", info);
+            lines.push(Line::from(vec![
+                label_span("Xpriv: "),
+                Span::raw("[redacted]"),
+                Span::raw("   "),
+                label_span("Xpub: "),
+                Span::raw(xpub.clone()),
+            ]));
+        }
+        Some(TuiInspectedMaterial::Xpub { xpub, info }) => {
+            append_extended_key_lines(lines, "extended public key", info);
+            lines.push(Line::from(vec![
+                label_span("Xpub: "),
+                Span::raw(xpub.encoded.clone()),
+            ]));
+        }
+        Some(TuiInspectedMaterial::Address { address, matches }) => {
+            lines.push(Line::from(vec![
+                label_span("Material: "),
+                Span::raw("address"),
+                Span::raw("   "),
+                label_span("Valid matches: "),
+                Span::styled(matches.len().to_string(), value_style()),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("Address: "),
+                Span::raw(address.clone()),
+            ]));
+            if matches.is_empty() {
+                lines.push(Line::from(vec![
+                    label_span("Networks: "),
+                    Span::raw("none"),
+                ]));
+            } else {
+                for info in matches {
+                    lines.push(Line::from(vec![
+                        label_span("Network: "),
+                        Span::styled(info.network.to_string(), value_style()),
+                        Span::raw("   "),
+                        label_span("Kind: "),
+                        Span::styled(address_kind_label(info.kind), value_style()),
+                        Span::raw("   "),
+                        label_span("Payload: "),
+                        Span::raw(info.payload_hex.clone()),
+                    ]));
+                }
+            }
+        }
+        Some(TuiInspectedMaterial::Wif { info }) => {
+            lines.push(Line::from(vec![
+                label_span("Material: "),
+                Span::raw("WIF"),
+                Span::raw("   "),
+                label_span("Network: "),
+                Span::styled(info.network.to_string(), value_style()),
+                Span::raw("   "),
+                label_span("Compressed: "),
+                Span::styled(info.compressed.to_string(), value_style()),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("WIF: "),
+                Span::raw("[redacted]"),
+            ]));
+            lines.push(Line::from(vec![
+                label_span("Public key: "),
+                Span::raw(info.public_key_hex.clone()),
+            ]));
+        }
+        None => {
+            let secret_line = match (&app.generated_secret, app.reveal) {
+                (Some(secret), true) => secret.as_str(),
+                (Some(_), false) => "[redacted]",
+                (None, _) => "No generated mnemonic yet",
+            };
+            lines.push(Line::from(vec![
+                label_span("Generated: "),
+                Span::raw(secret_line.to_owned()),
+            ]));
+        }
+    }
+}
+
+fn append_extended_key_lines(
+    lines: &mut Vec<Line<'static>>,
+    material_label: &'static str,
+    info: &ExtendedKeyInfo,
+) {
+    lines.push(Line::from(vec![
+        label_span("Material: "),
+        Span::raw(material_label),
+        Span::raw("   "),
+        label_span("Network: "),
+        Span::styled(info.network.to_string(), value_style()),
+        Span::raw("   "),
+        label_span("Depth: "),
+        Span::styled(info.depth.to_string(), value_style()),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Parent fingerprint: "),
+        Span::raw(info.parent_fingerprint_hex.clone()),
+        Span::raw("   "),
+        label_span("Child number: "),
+        Span::styled(info.child_number.to_string(), value_style()),
+    ]));
+    if let Some(public_key_hex) = &info.public_key_hex {
+        lines.push(Line::from(vec![
+            label_span("Public key: "),
+            Span::raw(public_key_hex.clone()),
+        ]));
+    }
+}
+
+fn append_address_lines(app: &TuiApp, lines: &mut Vec<Line<'static>>) {
     let incoming_path = app
         .incoming_address
         .as_ref()
@@ -778,53 +1038,56 @@ fn render_tui(frame: &mut ratatui::Frame<'_>, app: &TuiApp) {
         .outgoing_address
         .as_ref()
         .map_or("not created", |address| address.address.as_str());
-    let body = vec![
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(app.status.as_str(), status_style(app.status.as_str())),
-        ]),
-        Line::from(vec![
-            label_span("Source: "),
-            Span::raw(source_line),
-            Span::raw("   "),
-            label_span("Account: "),
-            Span::styled(app.account.to_string(), value_style()),
-            Span::raw("   "),
-            label_span("Index: "),
-            Span::styled(app.address_index.to_string(), value_style()),
-            Span::raw("   "),
-            label_span("Reveal: "),
-            Span::styled(if app.reveal { "on" } else { "off" }, value_style()),
-        ]),
-        Line::from(vec![label_span("Generated: "), Span::raw(secret_line)]),
-        Line::from(vec![
-            label_span("Incoming path: "),
-            Span::raw(incoming_path),
-        ]),
-        Line::from(vec![
-            label_span("Incoming address: "),
-            Span::styled(incoming_address, address_style(incoming_address)),
-        ]),
-        Line::from(vec![
-            label_span("Outgoing path: "),
-            Span::raw(outgoing_path),
-        ]),
-        Line::from(vec![
-            label_span("Outgoing address: "),
-            Span::styled(outgoing_address, address_style(outgoing_address)),
-        ]),
-    ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray))
-                    .title(Span::styled(" Answer ", title_style())),
-            )
-            .wrap(Wrap { trim: false }),
-        chunks[2],
-    );
+    lines.push(Line::from(vec![
+        label_span("Incoming path: "),
+        Span::raw(incoming_path.to_owned()),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Incoming address: "),
+        Span::styled(incoming_address.to_owned(), address_style(incoming_address)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Outgoing path: "),
+        Span::raw(outgoing_path.to_owned()),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Outgoing address: "),
+        Span::styled(outgoing_address.to_owned(), address_style(outgoing_address)),
+    ]));
+}
+
+fn active_source_label(app: &TuiApp) -> &'static str {
+    match app.inspected_material {
+        Some(TuiInspectedMaterial::Mnemonic { .. }) => "pasted seed phrase",
+        Some(TuiInspectedMaterial::Xpriv { .. }) => "pasted xpriv",
+        Some(TuiInspectedMaterial::Xpub { .. }) => "pasted xpub",
+        Some(TuiInspectedMaterial::Address { .. }) => "pasted address",
+        Some(TuiInspectedMaterial::Wif { .. }) => "pasted WIF",
+        None if app.generated_secret.is_some() => "generated mnemonic",
+        None => "sample mnemonic",
+    }
+}
+
+fn language_label(language: Language) -> &'static str {
+    match language {
+        Language::English => "english",
+        Language::SimplifiedChinese => "simplified-chinese",
+        Language::TraditionalChinese => "traditional-chinese",
+        Language::Czech => "czech",
+        Language::French => "french",
+        Language::Italian => "italian",
+        Language::Japanese => "japanese",
+        Language::Korean => "korean",
+        Language::Portuguese => "portuguese",
+        Language::Spanish => "spanish",
+    }
+}
+
+fn address_kind_label(kind: AddressKind) -> &'static str {
+    match kind {
+        AddressKind::P2pkh => "p2pkh",
+        AddressKind::P2sh => "p2sh",
+    }
 }
 
 fn brand_style() -> Style {
@@ -886,6 +1149,8 @@ fn status_style(status: &str) -> Style {
         || status.starts_with("Generated")
         || status.ends_with("true")
         || status.starts_with("Reveal")
+        || status.starts_with("Inspected")
+        || status.starts_with("Ready")
     {
         Style::default().fg(Color::LightGreen)
     } else {
@@ -902,15 +1167,29 @@ fn address_style(value: &str) -> Style {
 }
 
 fn handle_tui_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
+    match app.mode {
+        TuiMode::PasteInput => handle_tui_paste_input_key(app, key),
+        TuiMode::PassphraseInput => handle_tui_passphrase_key(app, key),
+        TuiMode::Home | TuiMode::InspectResult => handle_tui_home_key(app, key),
+    }
+}
+
+fn handle_tui_home_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
     match key {
         KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+        KeyCode::Char('/') => {
+            app.mode = TuiMode::PasteInput;
+            app.clear_input();
+            app.status = "Ready for pasted address, seed phrase, xpriv, xpub, or WIF.".to_owned();
+        }
         KeyCode::Char('r') => {
             app.reveal = !app.reveal;
-            app.status = "Reveal toggled for generated mnemonic.".to_owned();
+            app.status = "Reveal toggled for secret material.".to_owned();
         }
         KeyCode::Char('g') => {
             let generated = generate_mnemonic(MnemonicOptions::default())?;
             app.generated_secret = Some(generated.phrase);
+            app.inspected_material = None;
             app.clear_addresses();
             app.status = "Generated a 24-word English mnemonic.".to_owned();
         }
@@ -918,71 +1197,391 @@ fn handle_tui_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
             let valid = validate_mnemonic(TUI_SAMPLE_PHRASE, Language::English)?;
             app.status = format!("Sample mnemonic valid: {valid}");
         }
-        KeyCode::Char('i') => {
-            app.incoming_address = Some(derive_tui_address(app, TuiAddressBranch::Incoming)?);
-            app.status = format!(
-                "Created incoming address for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
-        KeyCode::Char('o') => {
-            app.outgoing_address = Some(derive_tui_address(app, TuiAddressBranch::Outgoing)?);
-            app.status = format!(
-                "Created outgoing address for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
-        KeyCode::Char('d') => {
-            app.incoming_address = Some(derive_tui_address(app, TuiAddressBranch::Incoming)?);
-            app.outgoing_address = Some(derive_tui_address(app, TuiAddressBranch::Outgoing)?);
-            app.status = format!(
-                "Created incoming and outgoing addresses for account {} index {}.",
-                app.account, app.address_index
-            );
-        }
+        KeyCode::Char('i') => match derive_tui_address(app, TuiAddressBranch::Incoming) {
+            Ok(address) => {
+                app.incoming_address = Some(address);
+                app.status = format!(
+                    "Created incoming address for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        KeyCode::Char('o') => match derive_tui_address(app, TuiAddressBranch::Outgoing) {
+            Ok(address) => {
+                app.outgoing_address = Some(address);
+                app.status = format!(
+                    "Created outgoing address for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        KeyCode::Char('d') => match derive_tui_addresses(app) {
+            Ok(()) => {
+                app.status = format!(
+                    "Created incoming and outgoing addresses for account {} index {}.",
+                    app.account, app.address_index
+                );
+            }
+            Err(error) => app.status = error.to_string(),
+        },
         KeyCode::Char('n') => {
             app.address_index = app.address_index.saturating_add(1);
             app.clear_addresses();
+            refresh_tui_derivations(app)?;
             app.status = format!("Address index set to {}.", app.address_index);
         }
         KeyCode::Char('p') => {
             app.address_index = app.address_index.saturating_sub(1);
             app.clear_addresses();
+            refresh_tui_derivations(app)?;
             app.status = format!("Address index set to {}.", app.address_index);
         }
         KeyCode::Char('a') => {
-            app.account = app.account.saturating_add(1);
-            app.clear_addresses();
-            app.status = format!("Account set to {}.", app.account);
+            if tui_account_can_change(app) {
+                app.account = app.account.saturating_add(1);
+                app.clear_addresses();
+                refresh_tui_derivations(app)?;
+                app.status = format!("Account set to {}.", app.account);
+            } else {
+                app.status =
+                    "Account control applies only to seed phrases and master xprivs.".to_owned();
+            }
         }
         KeyCode::Char('z') => {
-            app.account = app.account.saturating_sub(1);
-            app.clear_addresses();
-            app.status = format!("Account set to {}.", app.account);
+            if tui_account_can_change(app) {
+                app.account = app.account.saturating_sub(1);
+                app.clear_addresses();
+                refresh_tui_derivations(app)?;
+                app.status = format!("Account set to {}.", app.account);
+            } else {
+                app.status =
+                    "Account control applies only to seed phrases and master xprivs.".to_owned();
+            }
         }
         _ => {}
     }
     Ok(false)
 }
 
+fn handle_tui_paste_input_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
+    match key {
+        KeyCode::Esc => cancel_tui_input(app),
+        KeyCode::Enter => submit_tui_pasted_material(app)?,
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
+        KeyCode::Char(ch) => app.input_buffer.push(ch),
+        _ => {}
+    }
+    Ok(false)
+}
+
+fn handle_tui_passphrase_key(app: &mut TuiApp, key: KeyCode) -> Result<bool> {
+    match key {
+        KeyCode::Esc => cancel_tui_input(app),
+        KeyCode::Enter => submit_tui_mnemonic_passphrase(app)?,
+        KeyCode::Backspace => {
+            app.passphrase_buffer.pop();
+        }
+        KeyCode::Char(ch) => app.passphrase_buffer.push(ch),
+        _ => {}
+    }
+    Ok(false)
+}
+
+fn handle_tui_paste(app: &mut TuiApp, contents: &str) -> Result<()> {
+    match app.mode {
+        TuiMode::PasteInput => app.input_buffer.push_str(contents),
+        TuiMode::PassphraseInput => app.passphrase_buffer.push_str(contents),
+        TuiMode::Home | TuiMode::InspectResult => {
+            app.mode = TuiMode::PasteInput;
+            app.clear_input();
+            app.input_buffer.push_str(contents);
+            submit_tui_pasted_material(app)?;
+        }
+    }
+    Ok(())
+}
+
+fn cancel_tui_input(app: &mut TuiApp) {
+    app.clear_input();
+    app.mode = if app.inspected_material.is_some() {
+        TuiMode::InspectResult
+    } else {
+        TuiMode::Home
+    };
+    app.status = "Input cancelled.".to_owned();
+}
+
+fn submit_tui_pasted_material(app: &mut TuiApp) -> Result<()> {
+    let input = normalize_tui_input(&app.input_buffer);
+    if input.is_empty() {
+        app.status = "Paste or type material before inspecting.".to_owned();
+        return Ok(());
+    }
+
+    if let Some(pending) = classify_tui_mnemonic(&input)? {
+        app.pending_mnemonic = Some(pending);
+        app.passphrase_buffer.clear();
+        app.mode = TuiMode::PassphraseInput;
+        app.status =
+            "Seed phrase detected. Enter optional passphrase, then press Enter.".to_owned();
+        return Ok(());
+    }
+
+    let material = match classify_tui_non_mnemonic(&input) {
+        Ok(material) => material,
+        Err(error) => {
+            app.status = error.to_string();
+            return Ok(());
+        }
+    };
+    app.clear_input();
+    set_tui_inspected_material(app, material)?;
+    Ok(())
+}
+
+fn submit_tui_mnemonic_passphrase(app: &mut TuiApp) -> Result<()> {
+    let pending = app
+        .pending_mnemonic
+        .take()
+        .context("pending mnemonic should exist before passphrase submit")?;
+    let passphrase = if app.passphrase_buffer.is_empty() {
+        None
+    } else {
+        Some(app.passphrase_buffer.clone())
+    };
+    let keys = account_xpriv_from_mnemonic(
+        &pending.phrase,
+        passphrase.as_deref(),
+        pending.language,
+        Network::Mainnet,
+        app.account,
+    )?;
+    let material = TuiInspectedMaterial::Mnemonic {
+        phrase: pending.phrase,
+        passphrase,
+        language: pending.language,
+        word_count: pending.word_count,
+        account_xpub: keys.xpub.encoded,
+    };
+    app.clear_input();
+    set_tui_inspected_material(app, material)
+}
+
+fn set_tui_inspected_material(app: &mut TuiApp, material: TuiInspectedMaterial) -> Result<()> {
+    let fixed_account = tui_material_fixed_account(&material);
+    app.inspected_material = Some(material);
+    if let Some(account) = fixed_account {
+        app.account = account;
+    }
+    app.generated_secret = None;
+    app.mode = TuiMode::InspectResult;
+    app.clear_addresses();
+    refresh_tui_derivations(app)?;
+    app.status = if let Some(message) = app
+        .inspected_material
+        .as_ref()
+        .and_then(unsupported_tui_derivation_message)
+    {
+        format!("Inspected {}. {message}", active_source_label(app))
+    } else {
+        format!("Inspected {}.", active_source_label(app))
+    };
+    Ok(())
+}
+
+fn refresh_tui_derivations(app: &mut TuiApp) -> Result<()> {
+    if app
+        .inspected_material
+        .as_ref()
+        .is_some_and(tui_material_supports_derivations)
+    {
+        derive_tui_addresses(app)?;
+    }
+    Ok(())
+}
+
+fn derive_tui_addresses(app: &mut TuiApp) -> Result<()> {
+    let incoming = derive_tui_address(app, TuiAddressBranch::Incoming)?;
+    let outgoing = derive_tui_address(app, TuiAddressBranch::Outgoing)?;
+    app.incoming_address = Some(incoming);
+    app.outgoing_address = Some(outgoing);
+    Ok(())
+}
+
 fn derive_tui_address(app: &TuiApp, branch: TuiAddressBranch) -> Result<TuiDerivedAddress> {
+    if let Some(material) = &app.inspected_material {
+        return derive_inspected_tui_address(app, material, branch);
+    }
+
     let (phrase, passphrase) = match app.generated_secret.as_deref() {
         Some(phrase) => (phrase, None),
         None => (TUI_SAMPLE_PHRASE, Some("TREZOR")),
     };
-    let keys = account_xpriv_from_mnemonic(
+    derive_mnemonic_tui_address(
         phrase,
         passphrase,
         Language::English,
         Network::Mainnet,
         app.account,
-    )?;
-    let relative_path = format!("m/{}/{}", branch.path_component(), app.address_index);
+        app.address_index,
+        branch,
+    )
+}
+
+fn derive_inspected_tui_address(
+    app: &TuiApp,
+    material: &TuiInspectedMaterial,
+    branch: TuiAddressBranch,
+) -> Result<TuiDerivedAddress> {
+    match material {
+        TuiInspectedMaterial::Mnemonic {
+            phrase,
+            passphrase,
+            language,
+            ..
+        } => derive_mnemonic_tui_address(
+            phrase,
+            passphrase.as_deref(),
+            *language,
+            Network::Mainnet,
+            app.account,
+            app.address_index,
+            branch,
+        ),
+        TuiInspectedMaterial::Xpriv { xpriv, info, .. } => {
+            let path = tui_xpriv_derivation_path(app, info, branch)?;
+            let address = derive_address_from_xpriv(xpriv, &path)?;
+            Ok(TuiDerivedAddress {
+                path,
+                address: address.address,
+            })
+        }
+        TuiInspectedMaterial::Xpub { xpub, info } => {
+            let path = tui_xpub_derivation_path(app, info, branch)?;
+            let address = derive_address_from_xpub(xpub, &path)?;
+            Ok(TuiDerivedAddress {
+                path,
+                address: address.address,
+            })
+        }
+        TuiInspectedMaterial::Address { .. } | TuiInspectedMaterial::Wif { .. } => Err(anyhow!(
+            "address derivation does not apply to the inspected material"
+        )),
+    }
+}
+
+fn tui_material_supports_derivations(material: &TuiInspectedMaterial) -> bool {
+    match material {
+        TuiInspectedMaterial::Mnemonic { .. } => true,
+        TuiInspectedMaterial::Xpriv { info, .. } => matches!(info.depth, 0 | 3),
+        TuiInspectedMaterial::Xpub { info, .. } => info.depth == 3,
+        TuiInspectedMaterial::Address { .. } | TuiInspectedMaterial::Wif { .. } => false,
+    }
+}
+
+fn tui_account_can_change(app: &TuiApp) -> bool {
+    match &app.inspected_material {
+        Some(TuiInspectedMaterial::Xpriv { info, .. }) => info.depth == 0,
+        Some(TuiInspectedMaterial::Xpub { .. })
+        | Some(TuiInspectedMaterial::Address { .. })
+        | Some(TuiInspectedMaterial::Wif { .. }) => false,
+        Some(TuiInspectedMaterial::Mnemonic { .. }) | None => true,
+    }
+}
+
+fn tui_material_fixed_account(material: &TuiInspectedMaterial) -> Option<u32> {
+    match material {
+        TuiInspectedMaterial::Xpriv { info, .. } | TuiInspectedMaterial::Xpub { info, .. } => {
+            account_from_extended_key_info(info)
+        }
+        TuiInspectedMaterial::Mnemonic { .. }
+        | TuiInspectedMaterial::Address { .. }
+        | TuiInspectedMaterial::Wif { .. } => None,
+    }
+}
+
+fn account_from_extended_key_info(info: &ExtendedKeyInfo) -> Option<u32> {
+    const HARDENED_CHILD_OFFSET: u32 = 1 << 31;
+
+    if info.depth == 3 && info.child_number >= HARDENED_CHILD_OFFSET {
+        Some(info.child_number - HARDENED_CHILD_OFFSET)
+    } else {
+        None
+    }
+}
+
+fn unsupported_tui_derivation_message(material: &TuiInspectedMaterial) -> Option<&'static str> {
+    match material {
+        TuiInspectedMaterial::Xpriv { info, .. } if !matches!(info.depth, 0 | 3) => {
+            Some("Address derivation requires a master or account-level xpriv.")
+        }
+        TuiInspectedMaterial::Xpub { info, .. } if info.depth != 3 => {
+            Some("Address derivation requires an account-level xpub.")
+        }
+        _ => None,
+    }
+}
+
+fn tui_xpriv_derivation_path(
+    app: &TuiApp,
+    info: &ExtendedKeyInfo,
+    branch: TuiAddressBranch,
+) -> Result<String> {
+    match info.depth {
+        0 => Ok(format!(
+            "m/44'/3'/{}'/{}/{}",
+            app.account,
+            branch.path_component(),
+            app.address_index
+        )),
+        3 => Ok(format!(
+            "m/{}/{}",
+            branch.path_component(),
+            app.address_index
+        )),
+        _ => Err(anyhow!(
+            "Address derivation requires a master or account-level xpriv."
+        )),
+    }
+}
+
+fn tui_xpub_derivation_path(
+    app: &TuiApp,
+    info: &ExtendedKeyInfo,
+    branch: TuiAddressBranch,
+) -> Result<String> {
+    if info.depth != 3 {
+        return Err(anyhow!(
+            "Address derivation requires an account-level xpub."
+        ));
+    }
+    Ok(format!(
+        "m/{}/{}",
+        branch.path_component(),
+        app.address_index
+    ))
+}
+
+fn derive_mnemonic_tui_address(
+    phrase: &str,
+    passphrase: Option<&str>,
+    language: Language,
+    network: Network,
+    account: u32,
+    address_index: u32,
+    branch: TuiAddressBranch,
+) -> Result<TuiDerivedAddress> {
+    let keys = account_xpriv_from_mnemonic(phrase, passphrase, language, network, account)?;
+    let relative_path = format!("m/{}/{}", branch.path_component(), address_index);
     let display_path = format!(
         "{}/{}/{}",
         keys.account_path,
         branch.path_component(),
-        app.address_index
+        address_index
     );
     let address = derive_address_from_xpub(&keys.xpub, &relative_path)?;
     Ok(TuiDerivedAddress {
@@ -990,6 +1589,108 @@ fn derive_tui_address(app: &TuiApp, branch: TuiAddressBranch) -> Result<TuiDeriv
         address: address.address,
     })
 }
+
+fn normalize_tui_input(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn classify_tui_mnemonic(input: &str) -> Result<Option<TuiPendingMnemonic>> {
+    let word_count = input.split_whitespace().count();
+    if !matches!(word_count, 12 | 15 | 18 | 21 | 24) {
+        return Ok(None);
+    }
+
+    for language in TUI_LANGUAGES {
+        if validate_mnemonic(input, language)? {
+            return Ok(Some(TuiPendingMnemonic {
+                phrase: input.to_owned(),
+                language,
+                word_count,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn classify_tui_non_mnemonic(input: &str) -> Result<TuiInspectedMaterial> {
+    if let Some(material) = inspect_tui_xpriv(input)? {
+        return Ok(material);
+    }
+    if let Some(material) = inspect_tui_xpub(input)? {
+        return Ok(material);
+    }
+
+    let address_matches = inspect_address(input)?;
+    if !address_matches.is_empty() {
+        return Ok(TuiInspectedMaterial::Address {
+            address: input.to_owned(),
+            matches: address_matches,
+        });
+    }
+
+    if let Some(material) = inspect_tui_wif(input) {
+        return Ok(material);
+    }
+
+    Err(anyhow!(
+        "Could not classify pasted material as a seed phrase, xpriv, xpub, address, or WIF."
+    ))
+}
+
+fn inspect_tui_xpriv(input: &str) -> Result<Option<TuiInspectedMaterial>> {
+    for network in TUI_NETWORKS {
+        let xpriv = Xpriv {
+            network,
+            encoded: input.to_owned(),
+        };
+        if let Ok(info) = inspect_xpriv(&xpriv) {
+            let xpub = xpub_from_xpriv(&xpriv)?;
+            return Ok(Some(TuiInspectedMaterial::Xpriv {
+                xpriv,
+                info,
+                xpub: xpub.encoded,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn inspect_tui_xpub(input: &str) -> Result<Option<TuiInspectedMaterial>> {
+    for network in TUI_NETWORKS {
+        let xpub = Xpub {
+            network,
+            encoded: input.to_owned(),
+        };
+        if let Ok(info) = inspect_xpub(&xpub) {
+            return Ok(Some(TuiInspectedMaterial::Xpub { xpub, info }));
+        }
+    }
+    Ok(None)
+}
+
+fn inspect_tui_wif(input: &str) -> Option<TuiInspectedMaterial> {
+    for network in TUI_NETWORKS {
+        if let Ok(info) = address_from_wif(network, input) {
+            return Some(TuiInspectedMaterial::Wif { info });
+        }
+    }
+    None
+}
+
+const TUI_NETWORKS: [Network; 3] = [Network::Mainnet, Network::Testnet, Network::Regtest];
+
+const TUI_LANGUAGES: [Language; 10] = [
+    Language::English,
+    Language::SimplifiedChinese,
+    Language::TraditionalChinese,
+    Language::Czech,
+    Language::French,
+    Language::Italian,
+    Language::Japanese,
+    Language::Korean,
+    Language::Portuguese,
+    Language::Spanish,
+];
 
 #[derive(Debug, Clone, Copy)]
 enum TuiAddressBranch {
@@ -1012,10 +1713,57 @@ struct TuiDerivedAddress {
     address: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TuiMode {
+    Home,
+    PasteInput,
+    PassphraseInput,
+    InspectResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TuiPendingMnemonic {
+    phrase: String,
+    language: Language,
+    word_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TuiInspectedMaterial {
+    Mnemonic {
+        phrase: String,
+        passphrase: Option<String>,
+        language: Language,
+        word_count: usize,
+        account_xpub: String,
+    },
+    Xpriv {
+        xpriv: Xpriv,
+        info: ExtendedKeyInfo,
+        xpub: String,
+    },
+    Xpub {
+        xpub: Xpub,
+        info: ExtendedKeyInfo,
+    },
+    Address {
+        address: String,
+        matches: Vec<AddressInfo>,
+    },
+    Wif {
+        info: WifInfo,
+    },
+}
+
 struct TuiApp {
+    mode: TuiMode,
     reveal: bool,
     status: String,
     generated_secret: Option<String>,
+    input_buffer: String,
+    passphrase_buffer: String,
+    pending_mnemonic: Option<TuiPendingMnemonic>,
+    inspected_material: Option<TuiInspectedMaterial>,
     account: u32,
     address_index: u32,
     incoming_address: Option<TuiDerivedAddress>,
@@ -1025,9 +1773,14 @@ struct TuiApp {
 impl TuiApp {
     fn new() -> Self {
         Self {
+            mode: TuiMode::Home,
             reveal: false,
             status: "Choose an action. Secrets stay redacted until reveal is enabled.".to_owned(),
             generated_secret: None,
+            input_buffer: String::new(),
+            passphrase_buffer: String::new(),
+            pending_mnemonic: None,
+            inspected_material: None,
             account: 0,
             address_index: 0,
             incoming_address: None,
@@ -1038,6 +1791,12 @@ impl TuiApp {
     fn clear_addresses(&mut self) {
         self.incoming_address = None;
         self.outgoing_address = None;
+    }
+
+    fn clear_input(&mut self) {
+        self.input_buffer.clear();
+        self.passphrase_buffer.clear();
+        self.pending_mnemonic = None;
     }
 }
 
@@ -1061,6 +1820,7 @@ fn read_compose_request(path: &str) -> Result<ComposeTransactionRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use easydoge_km::derive_path_from_xpub;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
@@ -1099,6 +1859,7 @@ mod tests {
             address_index: 0,
             incoming_address: None,
             outgoing_address: None,
+            ..TuiApp::new()
         };
         let mut terminal = Terminal::new(TestBackend::new(34, 24))?;
 
@@ -1179,6 +1940,7 @@ mod tests {
                 path: "m/44'/3'/7'/1/42".to_owned(),
                 address: "DOUTGOINGCOPYVALUE1234567890".to_owned(),
             }),
+            ..TuiApp::new()
         };
         let mut terminal = Terminal::new(TestBackend::new(84, 24))?;
 
@@ -1194,6 +1956,157 @@ mod tests {
         assert!(rendered.contains("Outgoing path: m/44'/3'/7'/1/42"));
         assert!(rendered.contains("Incoming address: DINCOMINGCOPYVALUE"));
         assert!(rendered.contains("Outgoing address: DOUTGOINGCOPYVALUE"));
+        Ok(())
+    }
+
+    #[test]
+    fn tui_paste_inspects_address_without_derivation() -> Result<()> {
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM")?;
+
+        assert_eq!(app.mode, TuiMode::InspectResult);
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Address { .. })
+        ));
+        assert!(app.incoming_address.is_none());
+        assert!(app.outgoing_address.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn tui_invalid_paste_keeps_input_editable() -> Result<()> {
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, "not wallet material")?;
+
+        assert_eq!(app.mode, TuiMode::PasteInput);
+        assert_eq!(app.input_buffer, "not wallet material");
+        assert!(app.status.contains("Could not classify pasted material"));
+        Ok(())
+    }
+
+    #[test]
+    fn tui_paste_seed_phrase_uses_optional_passphrase_for_derivation() -> Result<()> {
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, TUI_SAMPLE_PHRASE)?;
+        assert_eq!(app.mode, TuiMode::PassphraseInput);
+
+        handle_tui_paste(&mut app, "TREZOR")?;
+        handle_tui_key(&mut app, KeyCode::Enter)?;
+
+        assert_eq!(app.mode, TuiMode::InspectResult);
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Mnemonic { .. })
+        ));
+        assert_eq!(
+            app.incoming_address,
+            Some(TuiDerivedAddress {
+                path: "m/44'/3'/0'/0/0".to_owned(),
+                address: "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM".to_owned(),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tui_paste_xpub_derives_watch_only_addresses_for_index_changes() -> Result<()> {
+        let account = account_xpriv_from_mnemonic(
+            TUI_SAMPLE_PHRASE,
+            Some("TREZOR"),
+            Language::English,
+            Network::Mainnet,
+            0,
+        )?;
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, &account.xpub.encoded)?;
+
+        assert_eq!(app.mode, TuiMode::InspectResult);
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Xpub { .. })
+        ));
+        assert_eq!(
+            app.incoming_address,
+            Some(TuiDerivedAddress {
+                path: "m/0/0".to_owned(),
+                address: "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM".to_owned(),
+            })
+        );
+
+        handle_tui_key(&mut app, KeyCode::Char('n'))?;
+        assert_eq!(app.address_index, 1);
+        assert_eq!(app.incoming_address.as_ref().unwrap().path, "m/0/1");
+        Ok(())
+    }
+
+    #[test]
+    fn tui_account_xpub_uses_fixed_account_metadata() -> Result<()> {
+        let account = account_xpriv_from_mnemonic(
+            TUI_SAMPLE_PHRASE,
+            Some("TREZOR"),
+            Language::English,
+            Network::Mainnet,
+            7,
+        )?;
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, &account.xpub.encoded)?;
+
+        assert_eq!(app.account, 7);
+        assert!(app.incoming_address.is_some());
+
+        handle_tui_key(&mut app, KeyCode::Char('a'))?;
+        assert_eq!(app.account, 7);
+        assert!(app.status.contains("master xprivs"));
+        Ok(())
+    }
+
+    #[test]
+    fn tui_branch_xpub_inspects_without_misleading_derivation() -> Result<()> {
+        let account = account_xpriv_from_mnemonic(
+            TUI_SAMPLE_PHRASE,
+            Some("TREZOR"),
+            Language::English,
+            Network::Mainnet,
+            0,
+        )?;
+        let branch_xpub = derive_path_from_xpub(&account.xpub, "m/0")?;
+        let mut app = TuiApp::new();
+
+        handle_tui_paste(&mut app, &branch_xpub.encoded)?;
+
+        assert_eq!(app.mode, TuiMode::InspectResult);
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Xpub { .. })
+        ));
+        assert!(app.incoming_address.is_none());
+        assert!(app.outgoing_address.is_none());
+        assert!(app.status.contains("account-level xpub"));
+
+        handle_tui_key(&mut app, KeyCode::Char('i'))?;
+        assert!(app.status.contains("account-level xpub"));
+        assert!(app.incoming_address.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn tui_redacts_pasted_seed_phrase_in_rendered_result() -> Result<()> {
+        let mut app = TuiApp::new();
+        handle_tui_paste(&mut app, TUI_SAMPLE_PHRASE)?;
+        handle_tui_key(&mut app, KeyCode::Enter)?;
+
+        let mut terminal = Terminal::new(TestBackend::new(96, 32))?;
+        terminal.draw(|frame| render_tui(frame, &app))?;
+        let rendered = rendered_lines(terminal.backend().buffer()).join("\n");
+
+        assert!(rendered.contains("Seed phrase: [redacted]"));
+        assert!(!rendered.contains(TUI_SAMPLE_PHRASE));
         Ok(())
     }
 
