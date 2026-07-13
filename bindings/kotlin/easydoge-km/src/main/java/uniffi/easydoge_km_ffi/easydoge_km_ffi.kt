@@ -636,49 +636,49 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckApiChecksums(this)
     }
     external fun uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_address_from_wif(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_inspect_xpub(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_sign_message(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_validate_address(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_verify_message(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv(
-    ): Short
+    ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv(
-    ): Short
+    ): Int
     external fun ffi_easydoge_km_ffi_uniffi_contract_version(
     ): Int
 
@@ -751,7 +751,7 @@ internal object UniffiLib {
     external fun ffi_easydoge_km_ffi_rust_future_free_u8(`handle`: Long,
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
+    ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_cancel_i8(`handle`: Long,
@@ -767,7 +767,7 @@ internal object UniffiLib {
     external fun ffi_easydoge_km_ffi_rust_future_free_u16(`handle`: Long,
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
+    ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_cancel_i16(`handle`: Long,
@@ -855,70 +855,70 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 4463.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 4463) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 58913.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 58913) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 65175.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 65175) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 58253.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 58253) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 56170.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 56170) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 29172.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 29172) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 49330.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 49330) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 31845.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 31845) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 4835.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 4835) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 11862.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 11862) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 37706.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 37706) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() != 42106.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() != 42106) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 60017.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 60017) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 21938.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 21938) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() != 54103.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() != 54103) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59801.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59801) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() != 38433.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() != 38433) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 4729.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 4729) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 49159.toShort()) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 49159) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1022,6 +1022,10 @@ public object FfiConverterUByte: FfiConverter<UByte, Byte> {
         return value.toUByte()
     }
 
+    fun lift(value: Int): UByte {
+        return value.toUByte()
+    }
+
     override fun read(buf: ByteBuffer): UByte {
         return lift(buf.get())
     }
@@ -1042,6 +1046,10 @@ public object FfiConverterUByte: FfiConverter<UByte, Byte> {
  */
 public object FfiConverterUShort: FfiConverter<UShort, Short> {
     override fun lift(value: Short): UShort {
+        return value.toUShort()
+    }
+
+    fun lift(value: Int): UShort {
         return value.toUShort()
     }
 
