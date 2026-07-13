@@ -10,6 +10,10 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 - Added a Ratatui paste inspector for Dogecoin addresses, seed phrases, extended keys, and WIFs.
 
+### Changed
+
+- Refreshed Rust workspace dependencies within existing Cargo semver ranges and aligned the UniFFI binding-generator pin to 0.31.2.
+
 ## 0.1.0 - 2026-06-04
 
 - Added Rust core Dogecoin key-management SDK.

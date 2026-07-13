@@ -6,7 +6,7 @@ cd "$ROOT"
 
 cargo build -p easydoge-km-ffi
 
-UNI_FFI_VERSION="0.31.1"
+UNI_FFI_VERSION="0.31.2"
 UNI_FFI_MANIFEST="${UNI_FFI_MANIFEST:-}"
 if [[ -z "$UNI_FFI_MANIFEST" ]]; then
   CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
