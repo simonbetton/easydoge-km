@@ -39,6 +39,52 @@ fileprivate extension ForeignBytes {
     init(bufferPointer: UnsafeBufferPointer<UInt8>) {
         self.init(len: Int32(bufferPointer.count), data: bufferPointer.baseAddress)
     }
+
+    init(rawBufferPointer: UnsafeRawBufferPointer) {
+        self.init(
+            len: Int32(rawBufferPointer.count),
+            data: rawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+        )
+    }
+}
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Conforms to `FfiConverter` so the compiler enforces the full converter
+// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
+// zero-copy byte buffers only flow foreign -> Rust, and only in argument
+// position. The four protocol-witness methods (`lift`, `lower`, `read`,
+// `write`) `fatalError` at runtime if anyone reaches them.
+//
+// The scope-bound `lower` takes a closure because the `ForeignBytes`
+// pointer is only guaranteed valid for the duration of
+// `Data.withUnsafeBytes`. Callers must run the full FFI call inside
+// the closure body.
+fileprivate enum FfiConverterByRefBytes: FfiConverter {
+    typealias SwiftType = Data
+    typealias FfiType = ForeignBytes
+
+    static func lower<R>(_ value: Data, _ body: (ForeignBytes) throws -> R) rethrows -> R {
+        return try value.withUnsafeBytes { rawBuf in
+            try body(ForeignBytes(rawBufferPointer: rawBuf))
+        }
+    }
+
+    static func lower(_ value: Data) -> ForeignBytes {
+        fatalError("ByRef bytes cannot use the plain lower: returning ForeignBytes escapes the Data.withUnsafeBytes scope. Use the scope-bound lower(_:_body:) overload instead.")
+    }
+
+    static func lift(_ value: ForeignBytes) throws -> Data {
+        fatalError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+    }
+
+    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        fatalError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
+
+    static func write(_ value: Data, into buf: inout [UInt8]) {
+        fatalError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
 }
 
 // For every type used in the interface, we provide helper methods for conveniently
@@ -2134,8 +2180,7 @@ public func FfiConverterTypeXpub_lower(_ value: Xpub) -> RustBuffer {
     return FfiConverterTypeXpub.lower(value)
 }
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum CoinSelectionStrategy: Equatable, Hashable {
 
@@ -2216,7 +2261,8 @@ public func FfiConverterTypeCoinSelectionStrategy_lower(_ value: CoinSelectionSt
 
 
 
-public enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+public
+enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
 
 
@@ -2289,8 +2335,7 @@ public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
     return FfiConverterTypeFfiError.lower(value)
 }
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum Language: Equatable, Hashable {
 
@@ -2412,8 +2457,7 @@ public func FfiConverterTypeLanguage_lower(_ value: Language) -> RustBuffer {
 }
 
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum Network: Equatable, Hashable {
 
@@ -2486,8 +2530,7 @@ public func FfiConverterTypeNetwork_lower(_ value: Network) -> RustBuffer {
 }
 
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum SigningInputKind: Equatable, Hashable {
 
@@ -2553,8 +2596,7 @@ public func FfiConverterTypeSigningInputKind_lower(_ value: SigningInputKind) ->
 }
 
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum TransactionOutputKind: Equatable, Hashable {
 
@@ -2627,8 +2669,7 @@ public func FfiConverterTypeTransactionOutputKind_lower(_ value: TransactionOutp
 }
 
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 
 public enum UtxoSignerKind: Equatable, Hashable {
 
@@ -3089,183 +3130,205 @@ fileprivate struct FfiConverterSequenceTypeXpub: FfiConverterRustBuffer {
 }
 public func accountXprivFromMnemonic(phrase: String, passphrase: String?, language: Language, network: Network, account: UInt32)throws  -> AccountKeySet  {
     return try  FfiConverterTypeAccountKeySet_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_account_xpriv_from_mnemonic(
         FfiConverterString.lower(phrase),
         FfiConverterOptionString.lower(passphrase),
         FfiConverterTypeLanguage_lower(language),
         FfiConverterTypeNetwork_lower(network),
-        FfiConverterUInt32.lower(account),$0
+        FfiConverterUInt32.lower(account),uniffiCallStatus
     )
 })
 }
 public func addressFromWif(network: Network, wif: String)throws  -> WifInfo  {
     return try  FfiConverterTypeWifInfo_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_address_from_wif(
         FfiConverterTypeNetwork_lower(network),
-        FfiConverterString.lower(wif),$0
+        FfiConverterString.lower(wif),uniffiCallStatus
     )
 })
 }
 public func combineSigningEnvelopes(envelopes: [SigningEnvelope])throws  -> SigningEnvelope  {
     return try  FfiConverterTypeSigningEnvelope_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(
-        FfiConverterSequenceTypeSigningEnvelope.lower(envelopes),$0
+        FfiConverterSequenceTypeSigningEnvelope.lower(envelopes),uniffiCallStatus
     )
 })
 }
 public func composeAndSignTransaction(request: ComposeTransactionRequest)throws  -> ComposeTransactionResult  {
     return try  FfiConverterTypeComposeTransactionResult_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(
-        FfiConverterTypeComposeTransactionRequest_lower(request),$0
+        FfiConverterTypeComposeTransactionRequest_lower(request),uniffiCallStatus
     )
 })
 }
 public func createMultisigDescriptor(network: Network, threshold: UInt8, cosignerXpubs: [Xpub], childPath: String, sorted: Bool)throws  -> MultisigDescriptor  {
     return try  FfiConverterTypeMultisigDescriptor_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_create_multisig_descriptor(
         FfiConverterTypeNetwork_lower(network),
         FfiConverterUInt8.lower(threshold),
         FfiConverterSequenceTypeXpub.lower(cosignerXpubs),
         FfiConverterString.lower(childPath),
-        FfiConverterBool.lower(sorted),$0
+        FfiConverterBool.lower(sorted),uniffiCallStatus
     )
 })
 }
 public func deriveAddressFromXpriv(xpriv: Xpriv, path: String)throws  -> PathAddress  {
     return try  FfiConverterTypePathAddress_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpriv(
         FfiConverterTypeXpriv_lower(xpriv),
-        FfiConverterString.lower(path),$0
+        FfiConverterString.lower(path),uniffiCallStatus
     )
 })
 }
 public func deriveAddressFromXpub(xpub: Xpub, path: String)throws  -> PathAddress  {
     return try  FfiConverterTypePathAddress_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpub(
         FfiConverterTypeXpub_lower(xpub),
-        FfiConverterString.lower(path),$0
+        FfiConverterString.lower(path),uniffiCallStatus
     )
 })
 }
 public func derivePathFromXpriv(xpriv: Xpriv, path: String)throws  -> Xpriv  {
     return try  FfiConverterTypeXpriv_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpriv(
         FfiConverterTypeXpriv_lower(xpriv),
-        FfiConverterString.lower(path),$0
+        FfiConverterString.lower(path),uniffiCallStatus
     )
 })
 }
 public func derivePathFromXpub(xpub: Xpub, path: String)throws  -> Xpub  {
     return try  FfiConverterTypeXpub_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpub(
         FfiConverterTypeXpub_lower(xpub),
-        FfiConverterString.lower(path),$0
+        FfiConverterString.lower(path),uniffiCallStatus
     )
 })
 }
 public func finalizeSigningEnvelope(envelope: SigningEnvelope)throws  -> SignedTransaction  {
     return try  FfiConverterTypeSignedTransaction_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_finalize_signing_envelope(
-        FfiConverterTypeSigningEnvelope_lower(envelope),$0
+        FfiConverterTypeSigningEnvelope_lower(envelope),uniffiCallStatus
     )
 })
 }
 public func generateMnemonic(options: MnemonicOptions)throws  -> GeneratedMnemonic  {
     return try  FfiConverterTypeGeneratedMnemonic_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_generate_mnemonic(
-        FfiConverterTypeMnemonicOptions_lower(options),$0
+        FfiConverterTypeMnemonicOptions_lower(options),uniffiCallStatus
     )
 })
 }
 public func inspectXpriv(xpriv: Xpriv)throws  -> ExtendedKeyInfo  {
     return try  FfiConverterTypeExtendedKeyInfo_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_inspect_xpriv(
-        FfiConverterTypeXpriv_lower(xpriv),$0
+        FfiConverterTypeXpriv_lower(xpriv),uniffiCallStatus
     )
 })
 }
 public func inspectXpub(xpub: Xpub)throws  -> ExtendedKeyInfo  {
     return try  FfiConverterTypeExtendedKeyInfo_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_inspect_xpub(
-        FfiConverterTypeXpub_lower(xpub),$0
+        FfiConverterTypeXpub_lower(xpub),uniffiCallStatus
     )
 })
 }
 public func mnemonicToSeedHex(phrase: String, passphrase: String?, language: Language)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_mnemonic_to_seed_hex(
         FfiConverterString.lower(phrase),
         FfiConverterOptionString.lower(passphrase),
-        FfiConverterTypeLanguage_lower(language),$0
+        FfiConverterTypeLanguage_lower(language),uniffiCallStatus
     )
 })
 }
 public func signMessage(network: Network, wif: String, message: String)throws  -> MessageSignature  {
     return try  FfiConverterTypeMessageSignature_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_sign_message(
         FfiConverterTypeNetwork_lower(network),
         FfiConverterString.lower(wif),
-        FfiConverterString.lower(message),$0
+        FfiConverterString.lower(message),uniffiCallStatus
     )
 })
 }
 public func signP2pkhTransaction(network: Network, unsignedTxHex: String, inputIndex: UInt64, scriptPubkeyHex: String, wif: String, sighashType: UInt32)throws  -> SignedTransaction  {
     return try  FfiConverterTypeSignedTransaction_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_sign_p2pkh_transaction(
         FfiConverterTypeNetwork_lower(network),
         FfiConverterString.lower(unsignedTxHex),
         FfiConverterUInt64.lower(inputIndex),
         FfiConverterString.lower(scriptPubkeyHex),
         FfiConverterString.lower(wif),
-        FfiConverterUInt32.lower(sighashType),$0
+        FfiConverterUInt32.lower(sighashType),uniffiCallStatus
     )
 })
 }
 public func signSigningEnvelope(envelope: SigningEnvelope, wif: String)throws  -> SigningEnvelope  {
     return try  FfiConverterTypeSigningEnvelope_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_sign_signing_envelope(
         FfiConverterTypeSigningEnvelope_lower(envelope),
-        FfiConverterString.lower(wif),$0
+        FfiConverterString.lower(wif),uniffiCallStatus
     )
 })
 }
 public func validateAddress(network: Network, address: String)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_validate_address(
         FfiConverterTypeNetwork_lower(network),
-        FfiConverterString.lower(address),$0
+        FfiConverterString.lower(address),uniffiCallStatus
     )
 })
 }
 public func validateMnemonic(phrase: String, language: Language)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_validate_mnemonic(
         FfiConverterString.lower(phrase),
-        FfiConverterTypeLanguage_lower(language),$0
+        FfiConverterTypeLanguage_lower(language),uniffiCallStatus
     )
 })
 }
 public func verifyMessage(network: Network, address: String, signatureBase64: String, message: String)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_verify_message(
         FfiConverterTypeNetwork_lower(network),
         FfiConverterString.lower(address),
         FfiConverterString.lower(signatureBase64),
-        FfiConverterString.lower(message),$0
+        FfiConverterString.lower(message),uniffiCallStatus
     )
 })
 }
 public func wifFromXpriv(xpriv: Xpriv)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_wif_from_xpriv(
-        FfiConverterTypeXpriv_lower(xpriv),$0
+        FfiConverterTypeXpriv_lower(xpriv),uniffiCallStatus
     )
 })
 }
 public func xpubFromXpriv(xpriv: Xpriv)throws  -> Xpub  {
     return try  FfiConverterTypeXpub_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
     uniffi_easydoge_km_ffi_fn_func_xpub_from_xpriv(
-        FfiConverterTypeXpriv_lower(xpriv),$0
+        FfiConverterTypeXpriv_lower(xpriv),uniffiCallStatus
     )
 })
 }
@@ -3285,70 +3348,70 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 4463) {
+    if (uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 58952) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 58913) {
+    if (uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 62494) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667) {
+    if (uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 53844) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869) {
+    if (uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 31231) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691) {
+    if (uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 14743) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 65175) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 12406) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 58253) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 15360) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 56170) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 24894) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 29172) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 50174) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 49330) {
+    if (uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 6805) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 31845) {
+    if (uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 50715) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 4835) {
+    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 62343) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 11862) {
+    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 30445) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 37706) {
+    if (uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 45842) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_message() != 42106) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_message() != 54472) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 60017) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 9304) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 21938) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 24006) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_validate_address() != 54103) {
+    if (uniffi_easydoge_km_ffi_checksum_func_validate_address() != 61885) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59801) {
+    if (uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59929) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_verify_message() != 38433) {
+    if (uniffi_easydoge_km_ffi_checksum_func_verify_message() != 42166) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 4729) {
+    if (uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 13195) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 49159) {
+    if (uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 15071) {
         return InitializationResult.apiChecksumMismatch
     }
 

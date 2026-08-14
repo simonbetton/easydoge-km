@@ -98,6 +98,43 @@ internal open class ForeignBytes : Structure() {
 
     class ByValue : ForeignBytes(), Structure.ByValue
 }
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
+// and only in argument position. `lift`, `read`, `write`, and
+// `allocationSize` have no sound implementation here and all panic at
+// runtime. The `FfiConverter` interface is implemented so that the
+// compiler enforces the full method set (rather than relying on eyeball).
+//
+// The provided `ByteBuffer` MUST be direct — only direct buffers have a
+// stable native address that JNA can expose via `getDirectBufferPointer`.
+// The returned `ForeignBytes.ByValue` is only valid for the duration of
+// the FFI call; the Rust side treats it as a borrow.
+internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
+    override fun lower(value: java.nio.ByteBuffer): ForeignBytes.ByValue {
+        require(value.isDirect) { "UniFFI zero-copy &[u8] requires a direct ByteBuffer. Use ByteBuffer.allocateDirect()." }
+        val remaining = value.remaining()
+        val fb = ForeignBytes.ByValue()
+        fb.len = remaining
+        // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
+        // and pass null. The Rust side treats (null, 0) as &[].
+        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)
+        return fb
+    }
+
+    override fun lift(value: ForeignBytes.ByValue): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+
+    override fun read(buf: java.nio.ByteBuffer): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun write(value: java.nio.ByteBuffer, buf: java.nio.ByteBuffer): Unit =
+        error("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun allocationSize(value: java.nio.ByteBuffer): ULong =
+        error("ByRef bytes have no RustBuffer allocation size: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+}
 /**
  * The FfiConverter interface handles converter types to and from the FFI
  *
@@ -855,70 +892,70 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 4463) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 58952) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 58913) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 62494) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 26667) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 53844) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 12869) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 31231) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 3691) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 14743) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 65175) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 12406) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 58253) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 15360) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 56170) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 24894) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 29172) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 50174) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 49330) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 6805) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 31845) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 50715) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 4835) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 62343) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 11862) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 30445) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 37706) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 45842) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() != 42106) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() != 54472) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 60017) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 9304) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 21938) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 24006) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() != 54103) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() != 61885) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59801) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59929) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() != 38433) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() != 42166) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 4729) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 13195) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 49159) {
+    if (lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 15071) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -3223,7 +3260,12 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_account_xpriv_from_mnemonic(
 
-        FfiConverterString.lower(`phrase`),FfiConverterOptionalString.lower(`passphrase`),FfiConverterTypeLanguage.lower(`language`),FfiConverterTypeNetwork.lower(`network`),FfiConverterUInt.lower(`account`),_status)
+
+        FfiConverterString.lower(`phrase`),
+        FfiConverterOptionalString.lower(`passphrase`),
+        FfiConverterTypeLanguage.lower(`language`),
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterUInt.lower(`account`),_status)
 }
     )
     }
@@ -3234,7 +3276,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_address_from_wif(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterString.lower(`wif`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterString.lower(`wif`),_status)
 }
     )
     }
@@ -3244,6 +3288,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
             return FfiConverterTypeSigningEnvelope.lift(
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(
+
 
         FfiConverterSequenceTypeSigningEnvelope.lower(`envelopes`),_status)
 }
@@ -3256,6 +3301,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(
 
+
         FfiConverterTypeComposeTransactionRequest.lower(`request`),_status)
 }
     )
@@ -3267,7 +3313,12 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_create_multisig_descriptor(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterUByte.lower(`threshold`),FfiConverterSequenceTypeXpub.lower(`cosignerXpubs`),FfiConverterString.lower(`childPath`),FfiConverterBoolean.lower(`sorted`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterUByte.lower(`threshold`),
+        FfiConverterSequenceTypeXpub.lower(`cosignerXpubs`),
+        FfiConverterString.lower(`childPath`),
+        FfiConverterBoolean.lower(`sorted`),_status)
 }
     )
     }
@@ -3278,7 +3329,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpriv(
 
-        FfiConverterTypeXpriv.lower(`xpriv`),FfiConverterString.lower(`path`),_status)
+
+        FfiConverterTypeXpriv.lower(`xpriv`),
+        FfiConverterString.lower(`path`),_status)
 }
     )
     }
@@ -3289,7 +3342,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpub(
 
-        FfiConverterTypeXpub.lower(`xpub`),FfiConverterString.lower(`path`),_status)
+
+        FfiConverterTypeXpub.lower(`xpub`),
+        FfiConverterString.lower(`path`),_status)
 }
     )
     }
@@ -3300,7 +3355,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpriv(
 
-        FfiConverterTypeXpriv.lower(`xpriv`),FfiConverterString.lower(`path`),_status)
+
+        FfiConverterTypeXpriv.lower(`xpriv`),
+        FfiConverterString.lower(`path`),_status)
 }
     )
     }
@@ -3311,7 +3368,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpub(
 
-        FfiConverterTypeXpub.lower(`xpub`),FfiConverterString.lower(`path`),_status)
+
+        FfiConverterTypeXpub.lower(`xpub`),
+        FfiConverterString.lower(`path`),_status)
 }
     )
     }
@@ -3321,6 +3380,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
             return FfiConverterTypeSignedTransaction.lift(
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_finalize_signing_envelope(
+
 
         FfiConverterTypeSigningEnvelope.lower(`envelope`),_status)
 }
@@ -3333,6 +3393,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_generate_mnemonic(
 
+
         FfiConverterTypeMnemonicOptions.lower(`options`),_status)
 }
     )
@@ -3343,6 +3404,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
             return FfiConverterTypeExtendedKeyInfo.lift(
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_inspect_xpriv(
+
 
         FfiConverterTypeXpriv.lower(`xpriv`),_status)
 }
@@ -3355,6 +3417,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_inspect_xpub(
 
+
         FfiConverterTypeXpub.lower(`xpub`),_status)
 }
     )
@@ -3366,7 +3429,10 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_mnemonic_to_seed_hex(
 
-        FfiConverterString.lower(`phrase`),FfiConverterOptionalString.lower(`passphrase`),FfiConverterTypeLanguage.lower(`language`),_status)
+
+        FfiConverterString.lower(`phrase`),
+        FfiConverterOptionalString.lower(`passphrase`),
+        FfiConverterTypeLanguage.lower(`language`),_status)
 }
     )
     }
@@ -3377,7 +3443,10 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_sign_message(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterString.lower(`wif`),FfiConverterString.lower(`message`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterString.lower(`wif`),
+        FfiConverterString.lower(`message`),_status)
 }
     )
     }
@@ -3388,7 +3457,13 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_sign_p2pkh_transaction(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterString.lower(`unsignedTxHex`),FfiConverterULong.lower(`inputIndex`),FfiConverterString.lower(`scriptPubkeyHex`),FfiConverterString.lower(`wif`),FfiConverterUInt.lower(`sighashType`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterString.lower(`unsignedTxHex`),
+        FfiConverterULong.lower(`inputIndex`),
+        FfiConverterString.lower(`scriptPubkeyHex`),
+        FfiConverterString.lower(`wif`),
+        FfiConverterUInt.lower(`sighashType`),_status)
 }
     )
     }
@@ -3399,7 +3474,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_sign_signing_envelope(
 
-        FfiConverterTypeSigningEnvelope.lower(`envelope`),FfiConverterString.lower(`wif`),_status)
+
+        FfiConverterTypeSigningEnvelope.lower(`envelope`),
+        FfiConverterString.lower(`wif`),_status)
 }
     )
     }
@@ -3410,7 +3487,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_validate_address(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterString.lower(`address`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterString.lower(`address`),_status)
 }
     )
     }
@@ -3421,7 +3500,9 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_validate_mnemonic(
 
-        FfiConverterString.lower(`phrase`),FfiConverterTypeLanguage.lower(`language`),_status)
+
+        FfiConverterString.lower(`phrase`),
+        FfiConverterTypeLanguage.lower(`language`),_status)
 }
     )
     }
@@ -3432,7 +3513,11 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_verify_message(
 
-        FfiConverterTypeNetwork.lower(`network`),FfiConverterString.lower(`address`),FfiConverterString.lower(`signatureBase64`),FfiConverterString.lower(`message`),_status)
+
+        FfiConverterTypeNetwork.lower(`network`),
+        FfiConverterString.lower(`address`),
+        FfiConverterString.lower(`signatureBase64`),
+        FfiConverterString.lower(`message`),_status)
 }
     )
     }
@@ -3442,6 +3527,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
             return FfiConverterString.lift(
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_wif_from_xpriv(
+
 
         FfiConverterTypeXpriv.lower(`xpriv`),_status)
 }
@@ -3453,6 +3539,7 @@ public object FfiConverterSequenceTypeXpub: FfiConverterRustBuffer<List<Xpub>> {
             return FfiConverterTypeXpub.lift(
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_easydoge_km_ffi_fn_func_xpub_from_xpriv(
+
 
         FfiConverterTypeXpriv.lower(`xpriv`),_status)
 }

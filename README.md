@@ -28,7 +28,7 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 
 ## Requirements
 
-- Rust stable from `rust-toolchain.toml`
+- Rust 1.91 or newer (workspace MSRV); `rust-toolchain.toml` tracks stable
 - Swift 6 or newer for Swift package verification
 - JDK 17 for Android/Kotlin verification
 - Node.js 20 or newer and pnpm for Expo TypeScript and cross-check verification
