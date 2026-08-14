@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+};
 use easydoge_km::{
     account_xpriv_from_mnemonic, address_from_wif, combine_signing_envelopes,
     compose_and_sign_transaction, derive_address_from_xpriv, derive_address_from_xpub,
@@ -641,7 +643,7 @@ fn run_tui() -> Result<()> {
             .context("draw Ratatui frame")?;
 
         match event::read().context("read terminal event")? {
-            Event::Key(key) => {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if handle_tui_key(&mut app, key.code)? {
                     break Ok(());
                 }
@@ -1057,6 +1059,9 @@ fn append_address_lines(app: &TuiApp, lines: &mut Vec<Line<'static>>) {
 }
 
 fn active_source_label(app: &TuiApp) -> &'static str {
+    if app.pending_mnemonic.is_some() {
+        return "pasted seed phrase";
+    }
     match app.inspected_material {
         Some(TuiInspectedMaterial::Mnemonic { .. }) => "pasted seed phrase",
         Some(TuiInspectedMaterial::Xpriv { .. }) => "pasted xpriv",
@@ -1323,6 +1328,11 @@ fn submit_tui_pasted_material(app: &mut TuiApp) -> Result<()> {
     }
 
     if let Some(pending) = classify_tui_mnemonic(&input)? {
+        // Drop any previous inspect result so the Answer panel does not keep showing
+        // e.g. "pasted address" while the seed passphrase prompt is active.
+        app.inspected_material = None;
+        app.generated_secret = None;
+        app.clear_addresses();
         app.pending_mnemonic = Some(pending);
         app.passphrase_buffer.clear();
         app.mode = TuiMode::PassphraseInput;
@@ -1613,6 +1623,20 @@ fn classify_tui_mnemonic(input: &str) -> Result<Option<TuiPendingMnemonic>> {
 }
 
 fn classify_tui_non_mnemonic(input: &str) -> Result<TuiInspectedMaterial> {
+    let word_count = input.split_whitespace().count();
+    // Addresses, WIFs, and extended keys are single Base58 tokens. Multi-word
+    // paste is either an invalid/incomplete seed phrase or unrelated text.
+    if word_count > 1 {
+        if matches!(word_count, 12 | 15 | 18 | 21 | 24) {
+            return Err(anyhow!(
+                "Seed phrase has {word_count} words but is not a valid BIP39 mnemonic."
+            ));
+        }
+        return Err(anyhow!(
+            "Could not classify pasted material as a seed phrase, xpriv, xpub, address, or WIF."
+        ));
+    }
+
     if let Some(material) = inspect_tui_xpriv(input)? {
         return Ok(material);
     }
@@ -1960,6 +1984,25 @@ mod tests {
     }
 
     #[test]
+    fn tui_paste_seed_after_address_clears_address_source() -> Result<()> {
+        let mut app = TuiApp::new();
+        handle_tui_paste(&mut app, "DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM")?;
+        assert_eq!(active_source_label(&app), "pasted address");
+        assert!(matches!(
+            app.inspected_material,
+            Some(TuiInspectedMaterial::Address { .. })
+        ));
+
+        handle_tui_paste(&mut app, TUI_SAMPLE_PHRASE)?;
+        assert_eq!(app.mode, TuiMode::PassphraseInput);
+        assert!(app.pending_mnemonic.is_some());
+        assert!(app.inspected_material.is_none());
+        assert_eq!(active_source_label(&app), "pasted seed phrase");
+        assert!(app.status.contains("Seed phrase detected"));
+        Ok(())
+    }
+
+    #[test]
     fn tui_paste_inspects_address_without_derivation() -> Result<()> {
         let mut app = TuiApp::new();
 
@@ -1972,6 +2015,20 @@ mod tests {
         ));
         assert!(app.incoming_address.is_none());
         assert!(app.outgoing_address.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn tui_invalid_seed_phrase_does_not_classify_as_address() -> Result<()> {
+        let mut app = TuiApp::new();
+        // Valid word count, invalid checksum / last word.
+        let invalid_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+
+        handle_tui_paste(&mut app, invalid_phrase)?;
+
+        assert_eq!(app.mode, TuiMode::PasteInput);
+        assert!(app.inspected_material.is_none());
+        assert!(app.status.contains("not a valid BIP39 mnemonic"));
         Ok(())
     }
 
