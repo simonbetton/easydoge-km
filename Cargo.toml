@@ -12,11 +12,11 @@ edition = "2021"
 homepage = "https://github.com/simonbetton/easydoge-km"
 license = "MIT"
 repository = "https://github.com/simonbetton/easydoge-km"
-rust-version = "1.85"
+rust-version = "1.91"
 
 [workspace.dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 bip39 = { version = "2.2.2", features = ["all-languages", "rand", "zeroize"] }
 bitcoin = { version = "0.32.7-doge.0", package = "bitcoin-dogecoin", features = ["serde", "rand-std"] }
 bs58 = { version = "0.5", features = ["check"] }
@@ -29,5 +29,5 @@ serde_json = "1"
 sha2 = "0.11"
 thiserror = "2"
 unicode-normalization = "0.1"
-uniffi = "0.31.1"
+uniffi = "0.32.0"
 zeroize = { version = "1", features = ["derive"] }

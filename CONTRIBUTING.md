@@ -6,7 +6,7 @@ Thank you for working on EasyDoge KM. This SDK handles wallet key material, so c
 
 Install:
 
-- Rust stable with `rustfmt` and `clippy`
+- Rust 1.91 or newer (workspace MSRV) with `rustfmt` and `clippy`
 - Swift 6 or newer for the Swift package checks
 - JDK 17 for Android/Kotlin checks
 - Node.js 20 or newer and pnpm for Expo TypeScript and bitcoinjs cross-checks

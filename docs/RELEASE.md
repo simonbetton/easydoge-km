@@ -4,7 +4,7 @@ This guide describes how to cut an open-source release from the repository.
 
 ## Prerequisites
 
-- Rust stable from `rust-toolchain.toml`.
+- Rust 1.91 or newer (workspace MSRV); `rust-toolchain.toml` tracks stable.
 - Swift 6 or newer.
 - JDK 17.
 - Node.js 20 or newer.

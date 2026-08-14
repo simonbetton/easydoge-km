@@ -12,7 +12,10 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
-- Refreshed Rust workspace dependencies within existing Cargo semver ranges and aligned the UniFFI binding-generator pin to 0.31.2.
+- Refreshed Rust workspace dependencies within existing Cargo semver ranges.
+- Upgraded UniFFI to 0.32.0 (crate, binding generator, and generated Swift/Kotlin sources). Workspace MSRV is now Rust 1.91 because UniFFI 0.32 pulls `cargo-platform` 0.3.3. Rebuild native libraries together with these bindings or UniFFI checksum checks will fail.
+- Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
+- Upgraded the Expo TypeScript typecheck to 7.0.2 and pinned `rootDir` to `src` so emit still lands at `build/index.js`.
 
 ## 0.1.0 - 2026-06-04
 
