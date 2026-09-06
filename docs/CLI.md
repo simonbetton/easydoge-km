@@ -75,11 +75,23 @@ Launch:
 easydoge-km tui
 ```
 
-Press `q` or `Esc` to quit.
+The TUI is an address explorer for whatever key material you give it. It opens on the public parity-vector sample mnemonic so there is something to explore straight away, and it derives addresses live: pick an account and index and the receive and change addresses are already on screen, together with the full derivation path and public key of the highlighted one.
+
+Press `?` at any time for the key reference. `q` or `Ctrl+C` quits.
+
+### Layout
+
+- **Title bar**: the active network and whether secrets are currently revealed.
+- **Source**: what addresses derive from (the sample mnemonic, a generated mnemonic, or pasted material), its public metadata, and the account xpub in use.
+- **Addresses**: receive addresses (`…/0/index`) for the current account, with change addresses (`…/1/index`) beside them on terminals at least 120 columns wide. The cursor row is highlighted.
+- **Selected**: the derivation path, address, and public key of the cursor row for the active branch.
+- **Status row** and **hint row**: what the last key did, and which keys apply right now.
+
+Source and Addresses sit side by side from 80 columns up and stack on narrower terminals, which drop the Selected panel and the explanatory notes. Terminals smaller than 40×10 show a resize prompt instead.
 
 ### Paste inspector
 
-Press `/` to enter paste mode. You can paste or type:
+Press `/` to open the inspector, or paste straight into the terminal from the explorer. You can paste or type:
 
 - Dogecoin addresses
 - BIP39 seed phrases
@@ -87,54 +99,61 @@ Press `/` to enter paste mode. You can paste or type:
 - Extended public keys
 - WIF private keys
 
-The TUI does not echo unclassified input because it may contain secret material. Press `Enter` to inspect, `Backspace` to edit, or `Esc` to cancel.
+The inspector never echoes what you typed because it may be secret; it shows a masked field with the character and word count instead. Press `Enter` to inspect, `Backspace` to edit, `Ctrl+U` to clear, or `Esc` to cancel. Classification errors appear inside the popup and leave the input editable.
 
-Seed phrases move through a second passphrase prompt before deriving keys. Leave the passphrase empty and press `Enter` for a normal no-passphrase BIP39 seed, or type/paste the optional BIP39 passphrase first.
+Seed phrases go through a second prompt for the optional BIP39 passphrase. Leave it empty and press `Enter` for a normal no-passphrase seed. Cancelling either prompt leaves the previous source untouched.
 
-Inspector results are redacted by default:
+Results are redacted by default:
 
-- Seed phrases, xprivs, and WIFs are never shown unless reveal is enabled where the TUI supports revealing that value.
-- Xpubs, public keys, addresses, networks, depths, child numbers, and address payload hashes are shown because they are public metadata.
-- Address inspection reports every matching Dogecoin network and address kind (`p2pkh` or `p2sh`). Testnet and regtest may both match the same P2SH prefix.
-
-When pasted material can derive addresses, the TUI derives both incoming and outgoing/change addresses immediately for the current account and index. Changing account or index refreshes inspected derivations where applicable.
-
-### Mnemonic source
-
-Address creation does not require generating a mnemonic first. The TUI picks its seed material as follows:
-
-| Mode | When | Phrase | Passphrase |
-| --- | --- | --- | --- |
-| Sample | Before `g`, or after clearing generated secret | Parity test phrase (above) | `TREZOR` |
-| Generated | After `g` | New 24-word English mnemonic | none (empty) |
-
-The status panel shows **Source: sample mnemonic** or **Source: generated mnemonic**. Generated phrases stay redacted until you toggle reveal with `r`.
-
-Pressing `g` generates a new mnemonic and clears any addresses derived from the previous source.
+- Seed phrases and passphrases stay hidden until you press `r`, which renders the phrase as a numbered word grid. `Esc` hides them again.
+- Pasted xprivs and WIFs are never shown. Their public side is: the xpub, public key, address, network, depth, child number, and parent fingerprint.
+- Xpubs, addresses, public keys, and payload hashes are public metadata and always shown.
+- Address inspection reports every matching Dogecoin network and address kind (`p2pkh` or `p2sh`). Testnet and regtest share the same P2SH prefix.
 
 ### What addresses derive from
 
-The TUI does not derive addresses from the BIP32 master key directly. For the active mnemonic source it:
+Every address is a P2PKH address derived from an account-level xpub with the relative paths `m/0/index` (receive) and `m/1/index` (change). Where that xpub comes from depends on the source:
 
-1. Builds a BIP39 seed and BIP32 master key
-2. Derives the account extended key at `m/44'/3'/{account}'` (Dogecoin BIP44, coin type `3'`)
-3. Derives P2PKH addresses from the account **xpub** using relative paths `m/0/{index}` (incoming) and `m/1/{index}` (outgoing/change)
+| Source | Account xpub | Displayed paths | Account number |
+| --- | --- | --- | --- |
+| Sample, generated, or pasted seed phrase | `m/44'/3'/account'` on the selected network | absolute, e.g. `m/44'/3'/0'/0/5` | `a` / `z` change it |
+| Master xpriv (depth 0) | `m/44'/3'/account'` | absolute | `a` / `z` change it |
+| Account-level xpriv or xpub (depth 3) | the pasted key itself | relative, e.g. `m/0/5` | fixed by the key |
+| Extended keys at other depths, addresses, WIFs | none | — | — |
 
-Default account and index are `0`. Change them with the keys below before creating addresses.
+Sources that cannot derive addresses say why in the Addresses panel. Moving the index, changing the account, or switching network re-derives immediately; the BIP39 seed stretch runs once per account rather than once per address.
 
-Addresses from sample mode are deterministic and publicly known test material. Do not send real funds to them expecting privacy or exclusive control.
+### Mnemonic source
+
+| Source | When | Phrase | Passphrase |
+| --- | --- | --- | --- |
+| Sample | On launch, and after `x` | Parity test phrase (above) | `TREZOR` |
+| Generated | After `g` | New 24-word English mnemonic | none |
+| Pasted | After inspecting a seed phrase | Your phrase | Whatever you entered |
+
+A generated phrase exists only for the current session. Reveal it with `r` and back it up before relying on it. `x` discards pasted or generated material and returns to the sample mnemonic.
+
+Addresses from the sample mnemonic are deterministic, publicly known test material. Never send real funds to them.
+
+### Networks
+
+`t` cycles mainnet, testnet, and regtest for seed-phrase sources. Pasted extended keys are pinned to the networks their version bytes allow: Dogecoin-native mainnet keys (`dgpv`/`dgub`) stay on mainnet, while testnet-style keys (`tprv`/`tpub`) can switch between testnet and regtest, which share key prefixes but not address prefixes. Bitcoin-style legacy keys (`xprv`/`xpub`) can be interpreted on any network. Addresses and WIFs report their networks and cannot be switched.
 
 ### Keybindings
 
 | Key | Action |
 | --- | --- |
-| `/` | Paste or type material to inspect |
-| `g` | Generate a new mnemonic |
-| `v` | Validate the parity sample phrase |
-| `r` | Toggle reveal for secret material |
-| `i` | Create incoming address (`…/0/{index}`) |
-| `o` | Create outgoing/change address (`…/1/{index}`) |
-| `d` | Create both incoming and outgoing addresses |
-| `a` / `z` | Account + / − (clears displayed addresses) |
-| `n` / `p` | Address index + / − (clears displayed addresses) |
-| `q`, `Esc` | Quit |
+| `/` | Paste or type material to inspect (pasting from the explorer works too) |
+| `g` | Generate a new 24-word mnemonic |
+| `r` | Reveal or hide secret material |
+| `x` | Clear pasted or generated material and return to the sample mnemonic |
+| `t` | Cycle network where the source allows it |
+| `↑` / `↓`, `j` / `k`, `n` / `p` | Move the address index |
+| `PgUp` / `PgDn` | Move the index by a page |
+| `Home` | Back to index 0 |
+| `:` | Jump to an index |
+| `Tab`, `←` / `→` | Switch between receive and change |
+| `a` / `z` | Account + / − |
+| `?` | Toggle the key reference |
+| `Esc` | Close a popup, or hide revealed secrets |
+| `q`, `Ctrl+C` | Quit (`Ctrl+C` works inside popups too) |
