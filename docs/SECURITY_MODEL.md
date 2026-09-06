@@ -37,7 +37,7 @@ Extended public keys are not spending secrets, but they reveal wallet structure 
 The Rust core does not provide durable secret storage. Platform packages provide storage adapters:
 
 - Swift uses Keychain-backed storage.
-- Kotlin uses Android Keystore-backed encryption.
+- Kotlin uses Android Keystore-backed encryption; the Keystore-wrapped ciphertext is persisted in app-private, no-backup storage (`Context.noBackupFilesDir`) so Stored Wallet Handles survive process death. Keystore keys never leave the device, so records are intentionally excluded from Auto Backup.
 - Expo uses native module surfaces and should use the platform storage adapters in custom dev-client or EAS builds.
 
 Applications remain responsible for backup UX, user authentication policy, device compromise assumptions, and recovery flows.

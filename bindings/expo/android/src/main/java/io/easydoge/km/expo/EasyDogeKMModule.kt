@@ -33,7 +33,11 @@ import uniffi.easydoge_km_ffi.validateMnemonic
 
 class EasyDogeKMModule : Module() {
     private val sdk = EasyDogeKM()
-    private val store = AndroidKeystoreWalletSecretStore()
+    private val store by lazy {
+        AndroidKeystoreWalletSecretStore.persistent(
+            requireNotNull(appContext.reactContext) { "EasyDogeKM stored wallets require an Android context" },
+        )
+    }
 
     override fun definition() = ModuleDefinition {
         Name("EasyDogeKM")
