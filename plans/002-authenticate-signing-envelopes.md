@@ -24,6 +24,7 @@
 - **Category**: security
 - **Planned at**: commit `32f1e4d`, 2026-09-04
 - **Audit finding**: #1 (deep audit, evidence originally collected at `04e7499`, revalidated at `32f1e4d`)
+- **Amended**: 2026-09-06 at `599ca98` by the reviewer before dispatch. The validator now retains, rather than rejects, signatures for inputs that a partial envelope does not describe, because the transaction builder signs one input at a time while carrying the signatures already collected for earlier inputs (see Step 1 notes). Two guard tests were added: `signing_envelope_keeps_signatures_for_inputs_it_does_not_describe` and `compose_builder_signs_every_input_of_a_multi_utxo_transaction`.
 
 ## Why this matters
 
@@ -42,8 +43,15 @@ against the actual sighash before it does anything else.
 
 ## Current state
 
-All line numbers refer to `32f1e4d` plus plan 001. Open the files; do not rely
-on the numbers alone.
+Line numbers below were taken at `32f1e4d` before plan 001 landed. Plan 001
+added `validate_sighash_type` and `validated_sighash_flag` near the top of
+`signing.rs` (live lines 18–46), so live positions in that file are offset by
+about 35 lines: `sign_signing_envelope` now starts at live line 120,
+`combine_signing_envelopes` at 155, and `finalize_signing_envelope` at 183.
+The builder's per-input signing loop is at live lines 283–297 of
+`transaction_builder.rs`. The reviewer confirmed at `599ca98` that every
+excerpt below matches the live code by content. Match on content, not on
+line numbers; a content mismatch is still a STOP condition.
 
 - `crates/easydoge-km/src/signing.rs` — `SigningEnvelope` DTOs (lines 13–55), `sign_p2pkh_transaction` (57–83, builds a one-input envelope, signs it, then calls `finalize_signing_envelope`), `sign_signing_envelope` (85–116), `combine_signing_envelopes` (118–144), `finalize_signing_envelope` (146–232), helpers `parse_transaction`, `parse_script`, `push_bytes`, `MultisigMetadata`, `multisig_metadata`, `parse_multisig_redeem_script`, `decode_pushnum` (234–347). Plan 001 added `validate_sighash_type` and `validated_sighash_flag` (`pub(crate)`).
 - `crates/easydoge-km/src/transaction_builder.rs` — the builder calls `sign_signing_envelope` once per resolved signer with a **single-input** envelope even for multi-input transactions (lines 279–292) and `finalize_signing_envelope` with the full envelope when `envelope_is_complete` (295–299). It already checks signer ownership for its own signers (`validate_signer_ownership`, 669–711) — that logic stays; the envelope layer must now enforce the same thing for external callers. Because the builder signs with partial envelopes, **signing must accept envelopes that describe only some inputs; only finalization requires every input to be described.**
@@ -293,14 +301,23 @@ fn validate_envelope<'a>(
     let cache = SighashCache::new(tx);
     for signature in &envelope.signatures {
         let index = signature.input_index;
-        let input = validated
-            .iter()
-            .find(|input| input.index() == index)
-            .ok_or_else(|| {
-                Error::InvalidTransaction(format!(
-                    "signature references input {index} which the envelope does not describe"
-                ))
-            })?;
+        let input = match validated.iter().find(|input| input.index() == index) {
+            Some(input) => input,
+            None if index >= tx.input.len() => {
+                return Err(Error::InvalidTransaction(format!(
+                    "signature references input {index} which is out of range (transaction has {} inputs)",
+                    tx.input.len()
+                )));
+            }
+            // Only reachable under Partial coverage, because Complete coverage
+            // describes every in-range input. A co-signer, or the transaction
+            // builder (which signs one input at a time while carrying the
+            // signatures already collected for other inputs), may hold
+            // signatures for inputs this envelope does not describe. They cannot
+            // be verified here because the signing script is unknown; they are
+            // verified at finalization, which requires every input described.
+            None => continue,
+        };
         let public_key_bytes = hex::decode(&signature.public_key_hex)
             .map_err(|err| Error::Serialization(format!("invalid public key hex: {err}")))?;
         let public_key = PublicKey::from_slice(&public_key_bytes).map_err(|_| {
@@ -351,6 +368,8 @@ fn validate_envelope<'a>(
 ```
 
 Notes: `multisig_metadata` keeps returning an owned `MultisigMetadata`, which is moved into `ValidatedInput`. If `Secp256k1::verification_only()` is unavailable under the enabled features, use `Secp256k1::new()`. `ValidatedInput` borrows only the envelope, never `tx`, so callers may mutate `tx` after validation.
+
+**Why signatures for undescribed inputs pass through under `Partial` coverage** (do not "tighten" this): `crates/easydoge-km/src/transaction_builder.rs` (live lines 283–297) signs a multi-input transaction one input at a time. For each input it builds a `SigningEnvelope` whose `inputs` holds only that one descriptor but whose `signatures` holds everything collected so far, and passes it to `sign_signing_envelope`. On the second input the envelope therefore carries a signature for input 0 while describing only input 1. Rejecting that signature would break every multi-input transaction the builder produces, and the builder is out of scope. Nothing is lost: `finalize_signing_envelope` uses `Complete` coverage, so every signature is verified before a transaction is produced. Signature indices outside the transaction's input range are rejected under both coverages.
 
 **Verify**: `cargo build -p easydoge-km` → exit 0 (dead-code warnings acceptable until Step 3).
 
@@ -660,9 +679,54 @@ fn combine_rejects_envelope_carrying_forged_signature() {
     let error = combine_signing_envelopes(&[genuine, forged]).unwrap_err();
     assert!(error.to_string().contains("signature for input 0"), "{error}");
 }
+
+#[test]
+fn signing_envelope_keeps_signatures_for_inputs_it_does_not_describe() {
+    // Mirrors the transaction builder, which signs one input at a time while
+    // carrying the signatures already collected for other inputs.
+    let unsigned = two_input_unsigned_tx_hex();
+    let mut first_only = p2pkh_envelope();
+    first_only.unsigned_tx_hex = unsigned.clone();
+    let after_first = sign_signing_envelope(&first_only, &parity_wif()).unwrap();
+    assert_eq!(after_first.signatures.len(), 1);
+
+    let mut second_only = p2pkh_envelope();
+    second_only.unsigned_tx_hex = unsigned;
+    second_only.inputs[0].input_index = 1;
+    second_only.signatures = after_first.signatures.clone();
+    let after_second = sign_signing_envelope(&second_only, &parity_wif()).unwrap();
+    assert_eq!(after_second.signatures.len(), 2);
+    assert!(after_second.signatures.contains(&after_first.signatures[0]));
+
+    // Signatures may reference inputs the envelope does not describe, but
+    // never inputs the transaction does not have.
+    let mut out_of_range = after_second.clone();
+    out_of_range.signatures[0].input_index = 7;
+    let error = sign_signing_envelope(&out_of_range, &parity_wif()).unwrap_err();
+    assert!(error.to_string().contains("out of range"), "{error}");
+}
+
+#[test]
+fn compose_builder_signs_every_input_of_a_multi_utxo_transaction() {
+    let mut request = compose_request_base(
+        "6666666666666666666666666666666666666666666666666666666666666666",
+        100_000_000,
+    );
+    let mut second = request.utxos[0].clone();
+    second.txid = "7777777777777777777777777777777777777777777777777777777777777777".to_owned();
+    request.utxos.push(second);
+    // Larger than either UTXO alone, so both must be selected and signed.
+    request.outputs[0].value_koinu = 150_000_000;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.selected_inputs.len(), 2);
+    let signed_tx_hex = result.signed_tx_hex.expect("both inputs are signed by the WIF");
+    let tx: bitcoin::Transaction = deserialize(&hex::decode(&signed_tx_hex).unwrap()).unwrap();
+    assert_eq!(tx.input.len(), 2);
+    assert!(tx.input.iter().all(|input| !input.script_sig.is_empty()));
+}
 ```
 
-**Verify**: `cargo test -p easydoge-km --test parity` → compiles; the new tests fail (no validation yet) except `sign_p2pkh_transaction_still_signs_one_input_of_a_multi_input_transaction`, which passes before and after. Existing unrelated tests still pass.
+**Verify**: `cargo test -p easydoge-km --test parity` → compiles; the new tests fail (no validation yet) except `sign_p2pkh_transaction_still_signs_one_input_of_a_multi_input_transaction` and `compose_builder_signs_every_input_of_a_multi_utxo_transaction`, which pass before and after (the second one guards the builder path described in the Step 1 notes; if it fails at any point, the validator has broken the builder). Existing unrelated tests still pass.
 
 ### Step 3: Enforce in `sign_signing_envelope`
 
@@ -721,7 +785,7 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
 }
 ```
 
-**Verify**: `cargo test -p easydoge-km --test parity signing_envelope` → all `signing_envelope_*` tests pass, plus `sign_p2pkh_transaction_rejects_script_pubkey_not_owned_by_wif`. Then `cargo test -p easydoge-km --test parity compose_builder` → all builder tests still pass (the builder signs partial envelopes, which `DescriptorCoverage::Partial` allows). If any builder test fails here, see STOP conditions.
+**Verify**: `cargo test -p easydoge-km --test parity signing_envelope` → all `signing_envelope_*` tests pass, plus `sign_p2pkh_transaction_rejects_script_pubkey_not_owned_by_wif`. Then `cargo test -p easydoge-km --test parity compose_builder` → all builder tests still pass, including `compose_builder_signs_every_input_of_a_multi_utxo_transaction` (the builder signs partial envelopes that carry signatures for other inputs, which `DescriptorCoverage::Partial` allows). If any builder test fails here, see STOP conditions.
 
 ### Step 4: Enforce in `combine_signing_envelopes`
 
@@ -802,7 +866,7 @@ In `sign_p2pkh_transaction` (line 82) replace `finalize_signing_envelope(&envelo
 
 ### Step 6: Documentation
 
-- `docs/API.md`: add a subsection `## Signing Envelopes` after the builder section: "A Signing Envelope describes the inputs a signer knows about; each input index may appear once and must exist in the unsigned transaction. P2PKH inputs carry a pay-to-pubkey-hash script pubkey; P2SH multisig inputs carry a redeem script whose hash matches the script pubkey. `sign_signing_envelope` signs only inputs the supplied WIF controls and errors when it controls none. `combine_signing_envelopes` and `finalize_signing_envelope` verify every signature (DER encoding, sighash flag, key ownership, and ECDSA validity against the legacy sighash) before accepting it, and finalization requires every transaction input to be described."
+- `docs/API.md`: add a subsection `## Signing Envelopes` after the builder section: "A Signing Envelope describes the inputs a signer knows about; each input index may appear once and must exist in the unsigned transaction. P2PKH inputs carry a pay-to-pubkey-hash script pubkey; P2SH multisig inputs carry a redeem script whose hash matches the script pubkey. `sign_signing_envelope` signs only inputs the supplied WIF controls and errors when it controls none. `combine_signing_envelopes` and `finalize_signing_envelope` verify every signature (DER encoding, sighash flag, key ownership, and ECDSA validity against the legacy sighash) before accepting it, and finalization requires every transaction input to be described. A partial envelope may carry signatures for inputs it does not describe; those are verified when the envelope is finalized."
 - `docs/SECURITY_MODEL.md`, "Core Guarantees": add "Signing envelopes are authenticated: input descriptors must match the unsigned transaction and each other, and every signature is verified before it is combined or finalized."
 - `CHANGELOG.md` `### Security` (created by plan 001): add "Signing envelopes are now validated end to end: input descriptors must be unique and in range, P2SH redeem scripts must hash to their script pubkey, signing only covers inputs the key controls, combine/finalize verify every signature, and finalize requires every input to be described. Envelopes with forged or foreign signatures are rejected instead of producing invalid transactions."
 
@@ -815,7 +879,7 @@ In `sign_p2pkh_transaction` (line 82) replace `finalize_signing_envelope(&envelo
 ## Test plan
 
 - Rewritten: `p2sh_multisig_finalize_requires_threshold_signatures`, `p2sh_multisig_finalize_uses_redeem_script_public_key_order` (real keys, real signatures).
-- New (all in `crates/easydoge-km/tests/parity.rs`): `signing_envelope_rejects_wif_that_controls_no_input`, `sign_p2pkh_transaction_rejects_script_pubkey_not_owned_by_wif`, `sign_p2pkh_transaction_still_signs_one_input_of_a_multi_input_transaction`, `signing_envelope_signs_only_inputs_owned_by_each_wif`, `signing_envelope_does_not_duplicate_signatures_from_the_same_key`, `signing_envelope_rejects_duplicate_and_out_of_range_input_descriptors`, `finalize_rejects_tampered_signature_bytes`, `finalize_rejects_signature_with_mismatched_sighash_flag`, `finalize_rejects_signature_from_key_that_does_not_control_input`, `finalize_rejects_envelope_that_does_not_describe_every_input`, `finalize_rejects_p2sh_script_pubkey_that_does_not_match_redeem_script`, `p2sh_multisig_cosigners_sign_separately_then_combine_and_finalize`, `combine_rejects_envelope_carrying_forged_signature`.
+- New (all in `crates/easydoge-km/tests/parity.rs`): `signing_envelope_rejects_wif_that_controls_no_input`, `sign_p2pkh_transaction_rejects_script_pubkey_not_owned_by_wif`, `sign_p2pkh_transaction_still_signs_one_input_of_a_multi_input_transaction`, `signing_envelope_signs_only_inputs_owned_by_each_wif`, `signing_envelope_does_not_duplicate_signatures_from_the_same_key`, `signing_envelope_rejects_duplicate_and_out_of_range_input_descriptors`, `finalize_rejects_tampered_signature_bytes`, `finalize_rejects_signature_with_mismatched_sighash_flag`, `finalize_rejects_signature_from_key_that_does_not_control_input`, `finalize_rejects_envelope_that_does_not_describe_every_input`, `finalize_rejects_p2sh_script_pubkey_that_does_not_match_redeem_script`, `p2sh_multisig_cosigners_sign_separately_then_combine_and_finalize`, `combine_rejects_envelope_carrying_forged_signature`, `signing_envelope_keeps_signatures_for_inputs_it_does_not_describe`, `compose_builder_signs_every_input_of_a_multi_utxo_transaction`.
 - Regression guard: `fixture_account_inspection_wif_message_and_transaction_are_deterministic` must still produce the exact `transaction.signed_tx_hex` from `test-vectors/parity.json`; `bash scripts/cross-check.sh` must still match bitcoinjs; plan 001's `sign_p2pkh_rejects_sighash_single_without_matching_output` (which signs input 1 of a two-input transaction through a one-input envelope) must still pass.
 
 ## Done criteria
@@ -824,7 +888,7 @@ Machine-checkable. ALL must hold:
 
 - [ ] `cargo fmt --all --check` exits 0
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` exits 0
-- [ ] `cargo test --workspace --locked` exits 0 and lists all 13 new test names plus the 2 rewritten ones
+- [ ] `cargo test --workspace --locked` exits 0 and lists all 15 new test names plus the 2 rewritten ones
 - [ ] `grep -n '"aa"\|"bb"\|signature_hex: "01"' crates/easydoge-km/tests/parity.rs` returns no matches (no fake signatures remain)
 - [ ] `grep -n "fn validate_envelope" crates/easydoge-km/src/signing.rs` → 1 match, and `grep -c "validate_envelope(" crates/easydoge-km/src/signing.rs` ≥ 4 (call sites: sign + combine ×2 + apply_signatures; the generic definition line does not match this pattern)
 - [ ] `grep -c "DescriptorCoverage::Complete" crates/easydoge-km/src/signing.rs` → exactly 2 (enum comparison in the validator + `finalize_signing_envelope`)
@@ -851,3 +915,6 @@ Stop and report back (do not improvise) if:
 - `transaction_builder::envelope_is_complete` still relies on `multisig_threshold` / `multisig_public_keys_hex` metadata; a follow-up could derive completion from the validated redeem script instead (finding 13 is related).
 - Verification is O(signatures) ECDSA operations per call; envelopes from untrusted parties should be size-capped (finding 17) before this is exposed to arbitrary input sizes.
 - Reviewer focus: the P2PKH ownership check uses `hash160(compressed pubkey)`; uncompressed keys (finding 11) are intentionally still unsupported and will be reported as "does not control the input".
+- The `Partial` coverage pass-through for signatures on undescribed inputs exists for the builder's one-input-at-a-time signing loop in `transaction_builder.rs`. If the builder is ever changed to sign with full-input envelopes, the pass-through can be removed so `sign` and `combine` reject undescribed signature indices. `compose_builder_signs_every_input_of_a_multi_utxo_transaction` fails if that coupling is broken.
+- `verify_ecdsa` (libsecp256k1) accepts only low-S signatures. A co-signer that produces a high-S signature is rejected with "does not verify". This matches Dogecoin Core's LOW_S standardness policy, so such a transaction would have been refused by node mempools anyway. If lax acceptance is ever wanted, call `Signature::normalize_s` before verification and write the normalized signature into the scriptSig; never skip verification.
+- Executed 2026-09-06: commit `6a55829`, reviewed and approved, PR pending. The commit message says 13 new tests; the actual count is 15 (the two guard tests from the amendment are included in the diff).
