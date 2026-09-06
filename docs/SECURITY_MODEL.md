@@ -30,6 +30,7 @@ Extended public keys are not spending secrets, but they reveal wallet structure 
 - Xpub derivation rejects hardened child paths.
 - Dogecoin-native extended-key prefixes are emitted by default.
 - BIP39 seed phrases and BIP39 seeds cannot be recovered from xprivs.
+- Signing rejects undefined sighash types and the SIGHASH_SINGLE output-index bug.
 
 ## Storage Boundaries
 

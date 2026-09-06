@@ -10,6 +10,41 @@ use serde::{Deserialize, Serialize};
 use crate::keys::secret_key_from_wif;
 use crate::{Error, Network, Result};
 
+const SIGHASH_ALL: u32 = 0x01;
+const SIGHASH_NONE: u32 = 0x02;
+const SIGHASH_SINGLE: u32 = 0x03;
+const SIGHASH_ANYONECANPAY: u32 = 0x80;
+
+/// Accepts only the six consensus-defined sighash values and returns the
+/// single byte appended to a DER signature.
+pub(crate) fn validate_sighash_type(sighash_type: u32) -> Result<u8> {
+    let base = sighash_type & !SIGHASH_ANYONECANPAY;
+    let recognised =
+        sighash_type <= 0xff && matches!(base, SIGHASH_ALL | SIGHASH_NONE | SIGHASH_SINGLE);
+    if !recognised {
+        return Err(Error::InvalidTransaction(format!(
+            "unsupported sighash type {sighash_type:#x}; expected 0x01, 0x02, 0x03, 0x81, 0x82, or 0x83"
+        )));
+    }
+    Ok(sighash_type as u8)
+}
+
+/// Validates the sighash type for one input, including the SIGHASH_SINGLE
+/// rule that the input index must have a matching output.
+pub(crate) fn validated_sighash_flag(
+    sighash_type: u32,
+    input_index: usize,
+    output_count: usize,
+) -> Result<u8> {
+    let flag = validate_sighash_type(sighash_type)?;
+    if (sighash_type & !SIGHASH_ANYONECANPAY) == SIGHASH_SINGLE && input_index >= output_count {
+        return Err(Error::InvalidTransaction(format!(
+            "SIGHASH_SINGLE for input {input_index} requires an output at index {input_index}, but the transaction has {output_count} outputs"
+        )));
+    }
+    Ok(flag)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SigningEnvelope {
     pub version: u8,
@@ -94,6 +129,8 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
             .redeem_script_hex
             .as_deref()
             .unwrap_or(input.script_pubkey_hex.as_str());
+        let sighash_flag =
+            validated_sighash_flag(input.sighash_type, input.input_index, tx.output.len())?;
         let script = parse_script(script_hex)?;
         let cache = SighashCache::new(&tx);
         let sighash = cache
@@ -102,7 +139,7 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
         let message = Message::from_digest(sighash.to_byte_array());
         let signature = secp.sign_ecdsa(&message, &secret_key);
         let mut der = signature.serialize_der().to_vec();
-        der.push(input.sighash_type as u8);
+        der.push(sighash_flag);
         signatures.push(SigningEnvelopeSignature {
             input_index: input.input_index,
             public_key_hex: hex::encode(public_key.serialize()),
@@ -146,6 +183,7 @@ pub fn combine_signing_envelopes(envelopes: &[SigningEnvelope]) -> Result<Signin
 pub fn finalize_signing_envelope(envelope: &SigningEnvelope) -> Result<SignedTransaction> {
     let mut tx = parse_transaction(&envelope.unsigned_tx_hex)?;
     for input in &envelope.inputs {
+        validated_sighash_flag(input.sighash_type, input.input_index, tx.output.len())?;
         let mut matching: Vec<&SigningEnvelopeSignature> = envelope
             .signatures
             .iter()

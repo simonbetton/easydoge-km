@@ -1,3 +1,4 @@
+use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::{hash160, Hash};
 use easydoge_km::{
     account_xpriv_from_mnemonic, compose_and_sign_transaction, create_multisig_descriptor,
@@ -494,4 +495,140 @@ fn compose_request_base(txid: &str, previous_output_value_koinu: u64) -> Compose
         }),
         options: TransactionOptions::default(),
     }
+}
+
+fn parity_unsigned_tx_hex() -> String {
+    vectors()["transaction"]["unsigned_tx_hex"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn parity_script_pubkey_hex() -> String {
+    vectors()["transaction"]["script_pubkey_hex"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn parity_wif() -> String {
+    vectors()["mnemonic"]["account"]["wif"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// The parity transaction with its single input duplicated (vout 1), giving
+/// two inputs and one output.
+fn two_input_unsigned_tx_hex() -> String {
+    let mut tx: bitcoin::Transaction =
+        deserialize(&hex::decode(parity_unsigned_tx_hex()).unwrap()).unwrap();
+    let mut second = tx.input[0].clone();
+    second.previous_output.vout = 1;
+    tx.input.push(second);
+    hex::encode(serialize(&tx))
+}
+
+#[test]
+fn sign_p2pkh_rejects_sighash_types_outside_consensus_set() {
+    for sighash_type in [0x00u32, 0x04, 0x41, 0x80, 0x101, 0xff01] {
+        let error = sign_p2pkh_transaction(
+            Network::Mainnet,
+            &parity_unsigned_tx_hex(),
+            0,
+            &parity_script_pubkey_hex(),
+            &parity_wif(),
+            sighash_type,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported sighash type"),
+            "{sighash_type:#x}: {error}"
+        );
+    }
+}
+
+#[test]
+fn sign_p2pkh_accepts_anyone_can_pay_and_appends_flag_byte() {
+    let signed = sign_p2pkh_transaction(
+        Network::Mainnet,
+        &parity_unsigned_tx_hex(),
+        0,
+        &parity_script_pubkey_hex(),
+        &parity_wif(),
+        0x81,
+    )
+    .unwrap();
+    let tx: bitcoin::Transaction =
+        deserialize(&hex::decode(&signed.signed_tx_hex).unwrap()).unwrap();
+    let script_sig = tx.input[0].script_sig.as_bytes();
+    let signature_push_len = usize::from(script_sig[0]);
+    assert_eq!(script_sig[signature_push_len], 0x81);
+}
+
+#[test]
+fn sign_p2pkh_rejects_sighash_single_without_matching_output() {
+    let unsigned = two_input_unsigned_tx_hex();
+    let error = sign_p2pkh_transaction(
+        Network::Mainnet,
+        &unsigned,
+        1,
+        &parity_script_pubkey_hex(),
+        &parity_wif(),
+        0x03,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("SIGHASH_SINGLE"), "{error}");
+
+    // Input 0 does have a matching output, so SINGLE is allowed there.
+    sign_p2pkh_transaction(
+        Network::Mainnet,
+        &unsigned,
+        0,
+        &parity_script_pubkey_hex(),
+        &parity_wif(),
+        0x03,
+    )
+    .unwrap();
+}
+
+#[test]
+fn compose_builder_rejects_unsupported_sighash_type() {
+    let mut request = compose_request_base(
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        100_000_000,
+    );
+    request.options.sighash_type = 0x80;
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error.to_string().contains("unsupported sighash type"),
+        "{error}"
+    );
+}
+
+#[test]
+fn finalize_rejects_envelope_input_with_unsupported_sighash_type() {
+    let envelope = SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: parity_unsigned_tx_hex(),
+        inputs: vec![SigningEnvelopeInput {
+            input_index: 0,
+            kind: SigningInputKind::P2pkh,
+            script_pubkey_hex: parity_script_pubkey_hex(),
+            redeem_script_hex: None,
+            sighash_type: 1,
+            previous_output_value_koinu: None,
+            multisig_threshold: None,
+            multisig_public_keys_hex: vec![],
+        }],
+        signatures: vec![],
+    };
+    let mut signed = easydoge_km::sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    signed.inputs[0].sighash_type = 0x104;
+    let error = finalize_signing_envelope(&signed).unwrap_err();
+    assert!(
+        error.to_string().contains("unsupported sighash type"),
+        "{error}"
+    );
 }
