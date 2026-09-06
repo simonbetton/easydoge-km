@@ -6,6 +6,7 @@ import io.easydoge.km.AndroidKeystoreWalletSecretStore
 import io.easydoge.km.EasyDogeKM
 import io.easydoge.km.StoredWalletHandle
 import io.easydoge.km.StoredWalletProtection
+import io.easydoge.km.WireCodec
 import uniffi.easydoge_km_ffi.AuditedInput
 import uniffi.easydoge_km_ffi.ChangeDestination
 import uniffi.easydoge_km_ffi.CoinSelectionStrategy
@@ -42,7 +43,7 @@ class EasyDogeKMModule : Module() {
             sdk.generateMnemonic(
                 MnemonicOptions(
                     parseLanguage(options?.get("language") as? String),
-                    ((options?.get("wordCount") as? Number)?.toInt() ?: 24).toUInt(),
+                    WireCodec.uint16(options?.get("wordCount") ?: 24, "wordCount"),
                 ),
             ).toMap()
         }
@@ -55,8 +56,8 @@ class EasyDogeKMModule : Module() {
             sdk.mnemonicToSeedHex(phrase, passphrase, parseLanguage(language))
         }
 
-        AsyncFunction("accountKeysFromMnemonic") { phrase: String, passphrase: String?, language: String, network: String, account: Int ->
-            sdk.accountKeys(phrase, passphrase, parseLanguage(language), parseNetwork(network), account.toUInt()).toMap()
+        AsyncFunction("accountKeysFromMnemonic") { phrase: String, passphrase: String?, language: String, network: String, account: Double ->
+            sdk.accountKeys(phrase, passphrase, parseLanguage(language), parseNetwork(network), WireCodec.uint32(account, "account")).toMap()
         }
 
         AsyncFunction("deriveAddressFromXpriv") { xpriv: Map<String, Any?>, path: String ->
@@ -99,10 +100,10 @@ class EasyDogeKMModule : Module() {
             sdk.inspectXpub(xpub.toXpub()).toMap()
         }
 
-        AsyncFunction("createMultisigDescriptor") { network: String, threshold: Int, cosignerXpubs: List<Map<String, Any?>>, childPath: String, sorted: Boolean ->
+        AsyncFunction("createMultisigDescriptor") { network: String, threshold: Double, cosignerXpubs: List<Map<String, Any?>>, childPath: String, sorted: Boolean ->
             sdk.createMultisigDescriptor(
                 parseNetwork(network),
-                threshold.toUByte(),
+                WireCodec.uint8(threshold, "threshold"),
                 cosignerXpubs.map { it.toXpub() },
                 childPath,
                 sorted,
@@ -117,14 +118,14 @@ class EasyDogeKMModule : Module() {
             sdk.verifyMessage(parseNetwork(network), address, signatureBase64, message)
         }
 
-        AsyncFunction("signP2pkhTransaction") { network: String, unsignedTxHex: String, inputIndex: Int, scriptPubkeyHex: String, wif: String, sighashType: Int ->
+        AsyncFunction("signP2pkhTransaction") { network: String, unsignedTxHex: String, inputIndex: Double, scriptPubkeyHex: String, wif: String, sighashType: Double ->
             sdk.signP2pkhTransaction(
                 parseNetwork(network),
                 unsignedTxHex,
-                inputIndex.toULong(),
+                WireCodec.uint64(inputIndex, "inputIndex"),
                 scriptPubkeyHex,
                 wif,
-                sighashType.toUInt(),
+                WireCodec.uint32(sighashType, "sighashType"),
             ).toMap()
         }
 
@@ -282,7 +283,7 @@ private fun uniffi.easydoge_km_ffi.SignedTransaction.toMap(): Map<String, Any> =
 @Suppress("UNCHECKED_CAST")
 private fun Map<String, Any?>.toSigningEnvelope(): SigningEnvelope =
     SigningEnvelope(
-        version = number("version", 1).toInt().toUByte(),
+        version = WireCodec.uint8(this["version"] ?: 1, "version"),
         network = parseNetwork(this["network"] as? String),
         unsignedTxHex = this["unsignedTxHex"] as? String ?: "",
         inputs = (this["inputs"] as? List<Map<String, Any?>>).orEmpty().map { it.toSigningEnvelopeInput() },
@@ -291,19 +292,19 @@ private fun Map<String, Any?>.toSigningEnvelope(): SigningEnvelope =
 
 private fun Map<String, Any?>.toSigningEnvelopeInput(): SigningEnvelopeInput =
     SigningEnvelopeInput(
-        inputIndex = number("inputIndex", 0).toLong().toULong(),
+        inputIndex = WireCodec.uint64(this["inputIndex"], "inputIndex"),
         kind = parseSigningInputKind(this["kind"] as? String),
         scriptPubkeyHex = this["scriptPubkeyHex"] as? String ?: "",
         redeemScriptHex = this["redeemScriptHex"] as? String,
-        sighashType = number("sighashType", 1).toLong().toUInt(),
-        previousOutputValueKoinu = optionalNumber("previousOutputValueKoinu")?.toLong()?.toULong(),
-        multisigThreshold = optionalNumber("multisigThreshold")?.toInt()?.toUByte(),
+        sighashType = WireCodec.uint32(this["sighashType"] ?: 1, "sighashType"),
+        previousOutputValueKoinu = WireCodec.optionalKoinu(this["previousOutputValueKoinu"], "previousOutputValueKoinu"),
+        multisigThreshold = WireCodec.optionalUInt8(this["multisigThreshold"], "multisigThreshold"),
         multisigPublicKeysHex = stringList("multisigPublicKeysHex"),
     )
 
 private fun Map<String, Any?>.toSigningEnvelopeSignature(): SigningEnvelopeSignature =
     SigningEnvelopeSignature(
-        inputIndex = number("inputIndex", 0).toLong().toULong(),
+        inputIndex = WireCodec.uint64(this["inputIndex"], "inputIndex"),
         publicKeyHex = this["publicKeyHex"] as? String ?: "",
         signatureHex = this["signatureHex"] as? String ?: "",
     )
@@ -319,19 +320,19 @@ private fun SigningEnvelope.toMap(): Map<String, Any> =
 
 private fun SigningEnvelopeInput.toMap(): Map<String, Any?> =
     mapOf(
-        "inputIndex" to inputIndex.toLong(),
+        "inputIndex" to WireCodec.safeInteger(inputIndex, "inputIndex"),
         "kind" to kind.raw(),
         "scriptPubkeyHex" to scriptPubkeyHex,
         "redeemScriptHex" to redeemScriptHex,
         "sighashType" to sighashType.toInt(),
-        "previousOutputValueKoinu" to previousOutputValueKoinu?.toLong(),
+        "previousOutputValueKoinu" to previousOutputValueKoinu?.let { WireCodec.koinuString(it) },
         "multisigThreshold" to multisigThreshold?.toInt(),
         "multisigPublicKeysHex" to multisigPublicKeysHex,
     )
 
 private fun SigningEnvelopeSignature.toMap(): Map<String, Any> =
     mapOf(
-        "inputIndex" to inputIndex.toLong(),
+        "inputIndex" to WireCodec.safeInteger(inputIndex, "inputIndex"),
         "publicKeyHex" to publicKeyHex,
         "signatureHex" to signatureHex,
     )
@@ -341,14 +342,14 @@ private fun ComposeTransactionResult.toMap(): Map<String, Any?> =
         "network" to network.raw(),
         "selectedInputs" to selectedInputs.map { it.toMap() },
         "skippedInputs" to skippedInputs.map { it.toMap() },
-        "inputTotalKoinu" to inputTotalKoinu.toLong(),
-        "spendOutputTotalKoinu" to spendOutputTotalKoinu.toLong(),
-        "changeAmountKoinu" to changeAmountKoinu.toLong(),
+        "inputTotalKoinu" to WireCodec.koinuString(inputTotalKoinu),
+        "spendOutputTotalKoinu" to WireCodec.koinuString(spendOutputTotalKoinu),
+        "changeAmountKoinu" to WireCodec.koinuString(changeAmountKoinu),
         "changeAddress" to changeAddress,
         "changeScriptPubkeyHex" to changeScriptPubkeyHex,
-        "feeKoinu" to feeKoinu.toLong(),
-        "estimatedSizeBytes" to estimatedSizeBytes.toLong(),
-        "actualSizeBytes" to actualSizeBytes?.toLong(),
+        "feeKoinu" to WireCodec.koinuString(feeKoinu),
+        "estimatedSizeBytes" to WireCodec.safeInteger(estimatedSizeBytes, "estimatedSizeBytes"),
+        "actualSizeBytes" to actualSizeBytes?.let { WireCodec.safeInteger(it, "actualSizeBytes") },
         "dustChangeFoldedIntoFee" to dustChangeFoldedIntoFee,
         "unsignedTxHex" to unsignedTxHex,
         "signedTxHex" to signedTxHex,
@@ -359,7 +360,7 @@ private fun AuditedInput.toMap(): Map<String, Any> =
     mapOf(
         "txid" to txid,
         "vout" to vout.toLong(),
-        "previousOutputValueKoinu" to previousOutputValueKoinu.toLong(),
+        "previousOutputValueKoinu" to WireCodec.koinuString(previousOutputValueKoinu),
         "scriptPubkeyHex" to scriptPubkeyHex,
         "kind" to kind.raw(),
     )
@@ -368,16 +369,9 @@ private fun SkippedInput.toMap(): Map<String, Any> =
     mapOf(
         "txid" to txid,
         "vout" to vout.toLong(),
-        "previousOutputValueKoinu" to previousOutputValueKoinu.toLong(),
+        "previousOutputValueKoinu" to WireCodec.koinuString(previousOutputValueKoinu),
         "reason" to reason,
     )
-
-private fun Map<String, Any?>.number(
-    key: String,
-    fallback: Number,
-): Number = this[key] as? Number ?: fallback
-
-private fun Map<String, Any?>.optionalNumber(key: String): Number? = this[key] as? Number
 
 @Suppress("UNCHECKED_CAST")
 private fun Map<String, Any?>.dictionary(key: String): Map<String, Any?> =
@@ -404,12 +398,12 @@ private fun Map<String, Any?>.toComposeTransactionRequest(): ComposeTransactionR
 private fun Map<String, Any?>.toSpendableUtxo(): SpendableUtxo =
     SpendableUtxo(
         txid = this["txid"] as? String ?: "",
-        vout = number("vout", 0).toLong().toUInt(),
-        previousOutputValueKoinu = number("previousOutputValueKoinu", 0).toLong().toULong(),
+        vout = WireCodec.uint32(this["vout"], "vout"),
+        previousOutputValueKoinu = WireCodec.koinu(this["previousOutputValueKoinu"], "previousOutputValueKoinu"),
         scriptPubkeyHex = this["scriptPubkeyHex"] as? String ?: "",
         kind = parseSigningInputKind(this["kind"] as? String),
         redeemScriptHex = this["redeemScriptHex"] as? String,
-        multisigThreshold = optionalNumber("multisigThreshold")?.toInt()?.toUByte(),
+        multisigThreshold = WireCodec.optionalUInt8(this["multisigThreshold"], "multisigThreshold"),
         multisigPublicKeysHex = stringList("multisigPublicKeysHex"),
         signers = dictionaries("signers").map { it.toUtxoSigner() },
         manuallySelected = this["manuallySelected"] as? Boolean ?: false,
@@ -426,7 +420,7 @@ private fun Map<String, Any?>.toUtxoSigner(): UtxoSigner =
 private fun Map<String, Any?>.toTransactionOutput(): TransactionOutput =
     TransactionOutput(
         kind = parseTransactionOutputKind(this["kind"] as? String),
-        valueKoinu = number("valueKoinu", 0).toLong().toULong(),
+        valueKoinu = WireCodec.koinu(this["valueKoinu"], "valueKoinu"),
         address = this["address"] as? String,
         opReturnDataHex = this["opReturnDataHex"] as? String,
         scriptHex = this["scriptHex"] as? String,
@@ -434,8 +428,8 @@ private fun Map<String, Any?>.toTransactionOutput(): TransactionOutput =
 
 private fun Map<String, Any?>.toFeePolicy(): FeePolicy =
     FeePolicy(
-        feeRateKoinuPerKb = number("feeRateKoinuPerKb", 0).toLong().toULong(),
-        dustThresholdKoinu = number("dustThresholdKoinu", 0).toLong().toULong(),
+        feeRateKoinuPerKb = WireCodec.koinu(this["feeRateKoinuPerKb"], "feeRateKoinuPerKb"),
+        dustThresholdKoinu = WireCodec.koinu(this["dustThresholdKoinu"], "dustThresholdKoinu"),
     )
 
 private fun Map<String, Any?>.toChangeDestination(): ChangeDestination =
@@ -447,10 +441,10 @@ private fun Map<String, Any?>.toChangeDestination(): ChangeDestination =
 
 private fun Map<String, Any?>.toTransactionOptions(): TransactionOptions =
     TransactionOptions(
-        version = number("version", 1).toInt(),
-        lockTime = number("lockTime", 0).toLong().toUInt(),
-        sequence = number("sequence", UInt.MAX_VALUE.toLong()).toLong().toUInt(),
-        sighashType = number("sighashType", 1).toLong().toUInt(),
+        version = WireCodec.int32(this["version"] ?: 1, "version"),
+        lockTime = WireCodec.uint32(this["lockTime"] ?: 0, "lockTime"),
+        sequence = WireCodec.uint32(this["sequence"] ?: 4294967295.0, "sequence"),
+        sighashType = WireCodec.uint32(this["sighashType"] ?: 1, "sighashType"),
     )
 
 private fun Network.raw(): String = when (this) {

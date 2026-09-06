@@ -34,7 +34,7 @@ Dogecoin-native xpriv/xpub version bytes are emitted by default. Legacy Bitcoin-
 | Multisig descriptors | yes | yes | yes | yes | yes |
 | Compose-and-sign transaction builder | yes | yes | yes | yes | yes |
 
-Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects; signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
+Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects. Koinu amounts (`valueKoinu`, `previousOutputValueKoinu`, `feeRateKoinuPerKb`, `dustThresholdKoinu`, and the compose result totals) are canonical decimal strings because JavaScript numbers cannot represent every `u64`; use `koinuFromBigInt` / `koinuToBigInt` from the package for arithmetic. All other integers are JavaScript numbers that must be non-negative safe integers within the native range; out-of-range or non-integer values reject the promise with `Invalid <field>: …`. Signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
 
 ## Compose-and-Sign Transaction Builder
 

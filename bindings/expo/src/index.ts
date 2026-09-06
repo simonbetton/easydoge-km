@@ -11,6 +11,41 @@ export type Language =
   | "portuguese"
   | "spanish";
 
+/**
+ * Koinu amount as a canonical unsigned decimal string: "0" or digits with no
+ * leading zero, at most 18446744073709551615. JavaScript numbers cannot
+ * represent every u64 koinu value, so amounts cross the native bridge as
+ * strings. Use koinuFromBigInt / koinuToBigInt for arithmetic.
+ */
+export type Koinu = string;
+
+export const MAX_KOINU = 18446744073709551615n;
+
+const CANONICAL_DECIMAL = /^(0|[1-9][0-9]*)$/;
+
+export function isKoinu(value: unknown): value is Koinu {
+  return (
+    typeof value === "string" &&
+    value.length <= 20 &&
+    CANONICAL_DECIMAL.test(value) &&
+    BigInt(value) <= MAX_KOINU
+  );
+}
+
+export function koinuFromBigInt(value: bigint): Koinu {
+  if (value < 0n || value > MAX_KOINU) {
+    throw new RangeError(`koinu amount out of range: ${value}`);
+  }
+  return value.toString(10);
+}
+
+export function koinuToBigInt(value: Koinu): bigint {
+  if (!isKoinu(value)) {
+    throw new RangeError(`invalid koinu amount: ${String(value)}`);
+  }
+  return BigInt(value);
+}
+
 export interface MnemonicOptions {
   language?: Language;
   wordCount?: 12 | 15 | 18 | 21 | 24;
@@ -93,7 +128,7 @@ export interface SigningEnvelopeInput {
   scriptPubkeyHex: string;
   redeemScriptHex?: string | null;
   sighashType: number;
-  previousOutputValueKoinu?: number | null;
+  previousOutputValueKoinu?: Koinu | null;
   multisigThreshold?: number | null;
   multisigPublicKeysHex: string[];
 }
@@ -124,7 +159,7 @@ export interface UtxoSigner {
 export interface SpendableUtxo {
   txid: string;
   vout: number;
-  previousOutputValueKoinu: number;
+  previousOutputValueKoinu: Koinu;
   scriptPubkeyHex: string;
   kind: SigningInputKind;
   redeemScriptHex?: string | null;
@@ -138,15 +173,15 @@ export type TransactionOutputKind = "address" | "op-return" | "expert-raw-script
 
 export interface TransactionOutput {
   kind: TransactionOutputKind;
-  valueKoinu: number;
+  valueKoinu: Koinu;
   address?: string | null;
   opReturnDataHex?: string | null;
   scriptHex?: string | null;
 }
 
 export interface FeePolicy {
-  feeRateKoinuPerKb: number;
-  dustThresholdKoinu: number;
+  feeRateKoinuPerKb: Koinu;
+  dustThresholdKoinu: Koinu;
 }
 
 export type CoinSelectionStrategy =
@@ -181,7 +216,7 @@ export interface ComposeTransactionRequest {
 export interface AuditedInput {
   txid: string;
   vout: number;
-  previousOutputValueKoinu: number;
+  previousOutputValueKoinu: Koinu;
   scriptPubkeyHex: string;
   kind: SigningInputKind;
 }
@@ -189,7 +224,7 @@ export interface AuditedInput {
 export interface SkippedInput {
   txid: string;
   vout: number;
-  previousOutputValueKoinu: number;
+  previousOutputValueKoinu: Koinu;
   reason: string;
 }
 
@@ -197,12 +232,12 @@ export interface ComposeTransactionResult {
   network: Network;
   selectedInputs: AuditedInput[];
   skippedInputs: SkippedInput[];
-  inputTotalKoinu: number;
-  spendOutputTotalKoinu: number;
-  changeAmountKoinu: number;
+  inputTotalKoinu: Koinu;
+  spendOutputTotalKoinu: Koinu;
+  changeAmountKoinu: Koinu;
   changeAddress?: string | null;
   changeScriptPubkeyHex?: string | null;
-  feeKoinu: number;
+  feeKoinu: Koinu;
   estimatedSizeBytes: number;
   actualSizeBytes?: number | null;
   dustChangeFoldedIntoFee: boolean;
