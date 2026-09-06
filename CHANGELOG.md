@@ -16,6 +16,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - Upgraded UniFFI to 0.32.0 (crate, binding generator, and generated Swift/Kotlin sources). Workspace MSRV is now Rust 1.91 because UniFFI 0.32 pulls `cargo-platform` 0.3.3. Rebuild native libraries together with these bindings or UniFFI checksum checks will fail.
 - Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
 - Upgraded the Expo TypeScript typecheck to 7.0.2 and pinned `rootDir` to `src` so emit still lands at `build/index.js`.
+- **Breaking (Expo)**: koinu amounts in the Expo API are now decimal strings (`Koinu`) instead of numbers, and every other integer field is validated on the native side. Previously values above 2^53 lost precision, negative or fractional values could wrap on Android or crash on iOS.
 
 ### Security
 
