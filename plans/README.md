@@ -20,15 +20,24 @@ their original numbers so a later run can plan them without re-auditing.
 `plans/`. Never write them in code, docs, or these plan files. Status values
 below deliberately avoid that word.
 
+**Gradle gotcha for Kotlin plans**: the Android Gradle plugin's `test` task is
+a lifecycle task and rejects `--tests`; run a single class with
+`./gradlew :easydoge-km:testDebugUnitTest --tests '<fully.qualified.Class>'`.
+Gradle 8.13 needs JDK 17: if the default `java` is newer, export `JAVA_HOME`
+(and `ANDROID_HOME`) in the same shell command as `./gradlew` or
+`./scripts/verify.sh`. After a passing run Gradle reports the test tasks
+up-to-date; force re-execution with
+`./gradlew cleanTestDebugUnitTest cleanTestReleaseUnitTest test`.
+
 ## Execution order & status
 
 | Plan | Title | Finding | Priority | Effort | Depends on | Status |
 |------|-------|---------|----------|--------|------------|--------|
 | 001 | Reject undefined sighash types and the SIGHASH_SINGLE output-index bug | #5 | P1 | S | — | DONE (2026-09-06, reviewed and approved; commit `5321c2e` on branch `fix/sighash-type-validation`, PR https://github.com/simonbetton/easydoge-km/pull/40 open) |
-| 002 | Authenticate Signing Envelopes before signing, combining, or finalizing | #1 | P1 | M | 001 | PENDING |
-| 003 | NFKD-normalize BIP39 passphrases before seed derivation | #2 | P1 | S | — | PENDING |
+| 002 | Authenticate Signing Envelopes before signing, combining, or finalizing | #1 | P1 | M | 001 | DONE (2026-09-06, reviewed and approved; commit `6a55829` on branch `claude/improve-execute-002-001bdc` (also local branch `fix/authenticate-signing-envelopes`), PR https://github.com/simonbetton/easydoge-km/pull/41 open. Plan amended before dispatch so the validator keeps the builder's one-input-at-a-time signing loop working; see the plan's Status block) |
+| 003 | NFKD-normalize BIP39 passphrases before seed derivation | #2 | P1 | S | — | DONE (2026-09-06, reviewed and approved; commit `ef54326` on branch `fix/bip39-passphrase-nfkd`, not pushed, in worktree `.claude/worktrees/agent-ae953f036a7d2dfdd`) |
 | 004 | Make Expo monetary and integer transport lossless and crash-free | #3 | P1 | L | — | PENDING |
-| 005 | Persist Android stored-wallet records so handles survive process death | #4 | P1 | M | — | PENDING |
+| 005 | Persist Android stored-wallet records so handles survive process death | #4 | P1 | M | — | DONE (2026-09-06, reviewed and approved; commits `d72fe07` + `f5517eb` on branch `fix/android-durable-wallet-records` in worktree `.claude/worktrees/agent-a6a51c33524e3612f`, not pushed, no PR. JVM unit tests and full `verify.sh` pass; the manual Android device check was not run) |
 
 Status values: PENDING | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale — finding fixed independently or approach abandoned)
 
@@ -36,7 +45,7 @@ Status values: PENDING | IN PROGRESS | DONE | BLOCKED (with one-line reason) | R
 
 - **002 requires 001**: the envelope validator in 002 calls `validated_sighash_flag`, which 001 introduces, and 002 removes 001's per-input check from `finalize_signing_envelope` when it moves that check into the validator. Land 001 first; run 002 only after 001 is DONE.
 - **001/002 and 003 all append tests to `crates/easydoge-km/tests/parity.rs` and add entries to `CHANGELOG.md` / `docs/SECURITY_MODEL.md`.** They are logically independent; if executed in parallel, expect trivial merge conflicts in those three files only.
-- **004 and 005 both touch `bindings/expo/android/.../EasyDogeKMModule.kt` and add files under `bindings/kotlin/easydoge-km/src`.** 004 rewrites the numeric converters; 005 changes one line (the store construction). Land 005 first if possible (smaller diff), then 004.
+- **004 and 005 both touch `bindings/expo/android/.../EasyDogeKMModule.kt` and add files under `bindings/kotlin/easydoge-km/src`.** 004 rewrites the numeric converters; 005 changes one line (the store construction). Land 005 first if possible (smaller diff), then 004. 005 is DONE on `fix/android-durable-wallet-records`; rebase 004 onto it (the Expo module's `store` property is now a `by lazy` block at lines 36–40).
 - **003 needs its compatibility decision honored**: the plan documents the advisor's decision (spec compliance, no legacy mode, migration note in the changelog). If the operator disagrees, that is a STOP condition in the plan, not something the executor decides.
 - Finding 6 (Expo enum parsing fails open) is deliberately kept out of 004 but should be the next Expo plan; 004 leaves room for a strict enum parser beside `WireCodec`.
 

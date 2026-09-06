@@ -152,7 +152,7 @@ Conventions: `.editorconfig` — 2-space indent for `.ts`, 4-space for `.swift`/
 | Swift tests | `cd bindings/swift && swift test` | all tests pass |
 | Swift one test | `cd bindings/swift && swift test --filter WireCodecTests` | pass |
 | Kotlin tests | `cd bindings/kotlin && ./gradlew test` | BUILD SUCCESSFUL |
-| Kotlin one class | `cd bindings/kotlin && ./gradlew test --tests 'io.easydoge.km.WireCodecTest'` | BUILD SUCCESSFUL |
+| Kotlin one class | `cd bindings/kotlin && ./gradlew :easydoge-km:testDebugUnitTest --tests 'io.easydoge.km.WireCodecTest'` | BUILD SUCCESSFUL |
 | Swift syntax-only check of the Expo module | `swiftc -parse bindings/expo/ios/EasyDogeKMModule.swift` | exit 0 (parses; does not type-check imports) |
 | Readiness | `bash scripts/check-open-source-ready.sh` | exit 0 |
 | Full suite | `./scripts/verify.sh` | exit 0 |
@@ -456,7 +456,7 @@ object WireCodec {
 }
 ```
 
-**Verify**: `cd bindings/kotlin && ./gradlew test --tests 'io.easydoge.km.WireCodecTest'` → BUILD SUCCESSFUL. Then `./gradlew test` → the existing parity test still passes (requires `cargo build -p easydoge-km-ffi` beforehand).
+**Verify**: `cd bindings/kotlin && ./gradlew :easydoge-km:testDebugUnitTest --tests 'io.easydoge.km.WireCodecTest'` → BUILD SUCCESSFUL. Then `./gradlew test` → the existing parity test still passes (requires `cargo build -p easydoge-km-ffi` beforehand).
 
 ### Step 3: TypeScript contract
 

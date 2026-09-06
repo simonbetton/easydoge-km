@@ -105,7 +105,7 @@ Conventions: 4-space Kotlin, `error("…")` for failures (existing style), `CONT
 |---------|---------|---------------------|
 | Build native lib (needed by the existing Kotlin parity test) | `cargo build -p easydoge-km-ffi` | exit 0 |
 | Kotlin tests | `cd bindings/kotlin && ./gradlew test` | BUILD SUCCESSFUL |
-| One test class | `cd bindings/kotlin && ./gradlew test --tests 'io.easydoge.km.FileWalletRecordRepositoryTest'` | BUILD SUCCESSFUL |
+| One test class | `cd bindings/kotlin && ./gradlew :easydoge-km:testDebugUnitTest --tests 'io.easydoge.km.FileWalletRecordRepositoryTest'` | BUILD SUCCESSFUL |
 | Compile only | `cd bindings/kotlin && ./gradlew :easydoge-km:compileDebugKotlin` | BUILD SUCCESSFUL |
 | Readiness | `bash scripts/check-open-source-ready.sh` | exit 0 |
 | Full suite | `./scripts/verify.sh` | exit 0 |
@@ -251,7 +251,7 @@ object StoredWalletRecordCodec {
 
 (`StorageProtectionLevel.entries` requires Kotlin 1.9+; the project uses Kotlin 2.4.0.)
 
-**Verify**: `cd bindings/kotlin && ./gradlew test --tests 'io.easydoge.km.StoredWalletRecordCodecTest'` → BUILD SUCCESSFUL, 3 tests.
+**Verify**: `cd bindings/kotlin && ./gradlew :easydoge-km:testDebugUnitTest --tests 'io.easydoge.km.StoredWalletRecordCodecTest'` → BUILD SUCCESSFUL, 3 tests.
 
 ### Step 2: Repository abstraction, test-first
 
@@ -409,7 +409,7 @@ class FileWalletRecordRepository(private val directory: File) : WalletRecordRepo
 
 `Context.noBackupFilesDir` exists since API 21 (`minSdk` is 24). The `Context` import compiles against the Android stub jar in unit tests; only `fromContext` touches it and no unit test calls it.
 
-**Verify**: `cd bindings/kotlin && ./gradlew test --tests 'io.easydoge.km.FileWalletRecordRepositoryTest'` → BUILD SUCCESSFUL, 6 tests.
+**Verify**: `cd bindings/kotlin && ./gradlew :easydoge-km:testDebugUnitTest --tests 'io.easydoge.km.FileWalletRecordRepositoryTest'` → BUILD SUCCESSFUL, 6 tests.
 
 ### Step 3: Switch the store to the repository and clean up orphaned keys
 
