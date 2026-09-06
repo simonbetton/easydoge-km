@@ -17,6 +17,10 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
 - Upgraded the Expo TypeScript typecheck to 7.0.2 and pinned `rootDir` to `src` so emit still lands at `build/index.js`.
 
+### Security
+
+- Transaction signing and the Compose-and-Sign Transaction Builder now reject an unsupported sighash type (anything other than the six consensus-defined values) and reject `SIGHASH_SINGLE` for inputs without a matching output. Previously any `u32` was accepted, producing unspendable or, for the SIGHASH_SINGLE bug case, dangerously reusable signatures.
+
 ## 0.1.0 - 2026-06-04
 
 - Added Rust core Dogecoin key-management SDK.

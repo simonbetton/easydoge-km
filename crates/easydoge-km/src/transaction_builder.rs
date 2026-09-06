@@ -14,8 +14,9 @@ use std::str::FromStr;
 use crate::encoding::{base58check_decode, hash160_bytes, wif};
 use crate::keys::{decode_xpriv, derive_path_from_xpriv, secret_key_from_wif, Xpriv};
 use crate::signing::{
-    finalize_signing_envelope, sign_signing_envelope, SigningEnvelope, SigningEnvelopeInput,
-    SigningEnvelopeSignature, SigningInputKind,
+    finalize_signing_envelope, sign_signing_envelope, validate_sighash_type,
+    validated_sighash_flag, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
+    SigningInputKind,
 };
 use crate::{Error, Network, Result};
 
@@ -254,6 +255,9 @@ pub fn compose_and_sign_transaction(
         .map(|index| request.utxos[*index].clone())
         .collect::<Vec<_>>();
     let tx = build_unsigned_transaction(request, &selected_utxos, outputs)?;
+    for input_index in 0..tx.input.len() {
+        validated_sighash_flag(request.options.sighash_type, input_index, tx.output.len())?;
+    }
     let unsigned_tx_hex = hex::encode(serialize(&tx));
     let mut envelope = SigningEnvelope {
         version: 1,
@@ -348,6 +352,7 @@ fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
             "transaction version must be positive".to_owned(),
         ));
     }
+    validate_sighash_type(request.options.sighash_type)?;
     Ok(())
 }
 

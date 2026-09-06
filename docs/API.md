@@ -47,7 +47,7 @@ The request includes:
 - `fee_policy`: `fee_rate_koinu_per_kb` and `dust_threshold_koinu`.
 - `coin_selection`: `MinInputs`, `SmallestFirst`, `LargestFirst`, or `ManualSelectedInputs`.
 - `change`: an address or xpriv derivation source for non-dust change.
-- `options`: version, lock time, sequence, and sighash type. Size estimates use serialized bytes, not vbytes or weight.
+- `options`: version, lock time, sequence, and sighash type. Size estimates use serialized bytes, not vbytes or weight. Only the consensus-defined sighash types are accepted: `0x01` (ALL), `0x02` (NONE), `0x03` (SINGLE) and their `0x80` ANYONECANPAY variants; an unsupported sighash type is rejected with an error. `SIGHASH_SINGLE` is rejected for any input index that has no output at the same index.
 
 The result is audit-oriented: selected and skipped inputs, input total, spend output total, change amount/address/script, fee, estimated serialized size, actual serialized size when signed, whether dust change was folded into the fee, unsigned tx hex, signed tx hex when complete, and a signing envelope when more signatures are required.
 
