@@ -26,7 +26,7 @@ below deliberately avoid that word.
 |------|-------|---------|----------|--------|------------|--------|
 | 001 | Reject undefined sighash types and the SIGHASH_SINGLE output-index bug | #5 | P1 | S | — | DONE (2026-09-06, reviewed and approved; commit `5321c2e` on branch `fix/sighash-type-validation`, PR https://github.com/simonbetton/easydoge-km/pull/40 open) |
 | 002 | Authenticate Signing Envelopes before signing, combining, or finalizing | #1 | P1 | M | 001 | PENDING |
-| 003 | NFKD-normalize BIP39 passphrases before seed derivation | #2 | P1 | S | — | PENDING |
+| 003 | NFKD-normalize BIP39 passphrases before seed derivation | #2 | P1 | S | — | DONE (2026-09-06, reviewed and approved; commit `ef54326` on branch `claude/execute-003-improve-dd6187`, PR https://github.com/simonbetton/easydoge-km/pull/45 open) |
 | 004 | Make Expo monetary and integer transport lossless and crash-free | #3 | P1 | L | — | PENDING |
 | 005 | Persist Android stored-wallet records so handles survive process death | #4 | P1 | M | — | PENDING |
 
