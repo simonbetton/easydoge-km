@@ -24,6 +24,7 @@
 - **Category**: bug (data loss)
 - **Planned at**: commit `32f1e4d`, 2026-09-04
 - **Audit finding**: #4 (deep audit, evidence originally collected at `04e7499`, revalidated at `32f1e4d`)
+- **Executed**: 2026-09-06, commits `d72fe07` + `f5517eb`, reviewed and approved; PR https://github.com/simonbetton/easydoge-km/pull/44
 
 ## Why this matters
 
