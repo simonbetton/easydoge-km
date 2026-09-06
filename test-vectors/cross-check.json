@@ -12,6 +12,12 @@
       "language": "english",
       "phrase": "legal winner thank year wave sausage worth useful legal winner thank yellow",
       "passphrase": ""
+    },
+    {
+      "id": "abandon-unicode-passphrase",
+      "language": "english",
+      "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      "passphrase": "caf\u00e9\uff21"
     }
   ],
   "bip44_cases": [
@@ -45,6 +51,14 @@
       "network": "regtest",
       "account": 0,
       "child_paths": ["m/0/0", "m/0/2", "m/1/0"],
+      "hardened_public_path": "m/0'/0"
+    },
+    {
+      "id": "mainnet-account-0-unicode-passphrase",
+      "mnemonic_id": "abandon-unicode-passphrase",
+      "network": "mainnet",
+      "account": 0,
+      "child_paths": ["m/0/0"],
       "hardened_public_path": "m/0'/0"
     }
   ],

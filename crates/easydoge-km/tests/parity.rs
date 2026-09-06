@@ -632,3 +632,57 @@ fn finalize_rejects_envelope_input_with_unsupported_sighash_type() {
         "{error}"
     );
 }
+
+#[test]
+fn seed_derivation_normalizes_passphrase_to_nfkd() {
+    let precomposed = mnemonic_to_seed_hex(PHRASE, Some("caf\u{00e9}"), Language::English).unwrap();
+    let decomposed = mnemonic_to_seed_hex(PHRASE, Some("cafe\u{0301}"), Language::English).unwrap();
+    let plain = mnemonic_to_seed_hex(PHRASE, Some("cafe"), Language::English).unwrap();
+    assert_eq!(precomposed, decomposed);
+    assert_ne!(precomposed, plain);
+
+    let fullwidth = mnemonic_to_seed_hex(PHRASE, Some("\u{ff21}"), Language::English).unwrap();
+    let ascii = mnemonic_to_seed_hex(PHRASE, Some("A"), Language::English).unwrap();
+    assert_eq!(fullwidth, ascii, "NFKD maps fullwidth A to ASCII A");
+}
+
+#[test]
+fn account_keys_normalize_passphrase_to_nfkd() {
+    let precomposed = account_xpriv_from_mnemonic(
+        PHRASE,
+        Some("caf\u{00e9}"),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap();
+    let decomposed = account_xpriv_from_mnemonic(
+        PHRASE,
+        Some("cafe\u{0301}"),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap();
+    assert_eq!(precomposed.xpub.encoded, decomposed.xpub.encoded);
+}
+
+#[test]
+fn japanese_bip39_reference_vector_with_compatibility_passphrase_matches_spec() {
+    let words = ["あいこくしん"; 11]
+        .iter()
+        .chain(std::iter::once(&"あおぞら"))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\u{3000}");
+    let seed = mnemonic_to_seed_hex(
+        &words,
+        Some("㍍ガバヴァぱばぐゞちぢ十人十色"),
+        Language::Japanese,
+    )
+    .unwrap();
+    assert_eq!(
+        seed,
+        "a262d6fb6122ecf45be09c50492b31f92e9beb7d9a845987a02cefda57a15f9c467a17872029a9e92299b5cbdf306e3a0ee620245cbd508959b6cb7ca637bd55"
+    );
+}

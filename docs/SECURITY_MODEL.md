@@ -31,6 +31,7 @@ Extended public keys are not spending secrets, but they reveal wallet structure 
 - Dogecoin-native extended-key prefixes are emitted by default.
 - BIP39 seed phrases and BIP39 seeds cannot be recovered from xprivs.
 - Signing rejects undefined sighash types and the SIGHASH_SINGLE output-index bug.
+- BIP39 seed phrases and passphrases are NFKD-normalized before seed derivation.
 
 ## Storage Boundaries
 

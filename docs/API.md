@@ -36,6 +36,8 @@ Dogecoin-native xpriv/xpub version bytes are emitted by default. Legacy Bitcoin-
 
 Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects; signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
 
+Seed phrases and passphrases are NFKD-normalized before PBKDF2, as BIP39 requires, so canonically equivalent Unicode input derives the same wallet across every surface and matches other BIP39 implementations.
+
 ## Compose-and-Sign Transaction Builder
 
 `compose_and_sign_transaction` builds and funds Dogecoin legacy transactions entirely inside the Rust core, then signs every selected input for which valid signer material is supplied. Callers provide known UTXOs; the SDK does not fetch UTXOs, fetch live fees, broadcast transactions, or validate chain state.
