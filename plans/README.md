@@ -25,7 +25,7 @@ below deliberately avoid that word.
 | Plan | Title | Finding | Priority | Effort | Depends on | Status |
 |------|-------|---------|----------|--------|------------|--------|
 | 001 | Reject undefined sighash types and the SIGHASH_SINGLE output-index bug | #5 | P1 | S | — | DONE (2026-09-06, reviewed and approved; commit `5321c2e` on branch `fix/sighash-type-validation`, PR https://github.com/simonbetton/easydoge-km/pull/40 open) |
-| 002 | Authenticate Signing Envelopes before signing, combining, or finalizing | #1 | P1 | M | 001 | PENDING |
+| 002 | Authenticate Signing Envelopes before signing, combining, or finalizing | #1 | P1 | M | 001 | DONE (2026-09-06, reviewed and approved; commit `6a55829` on branch `claude/improve-execute-002-001bdc` (also local branch `fix/authenticate-signing-envelopes`), PR https://github.com/simonbetton/easydoge-km/pull/41 open. Plan amended before dispatch so the validator keeps the builder's one-input-at-a-time signing loop working; see the plan's Status block) |
 | 003 | NFKD-normalize BIP39 passphrases before seed derivation | #2 | P1 | S | — | PENDING |
 | 004 | Make Expo monetary and integer transport lossless and crash-free | #3 | P1 | L | — | PENDING |
 | 005 | Persist Android stored-wallet records so handles survive process death | #4 | P1 | M | — | PENDING |
@@ -48,6 +48,12 @@ Swift and Kotlin wrapper tests, Expo typecheck). It has not been rerun on
 `32f1e4d`; each plan's first verification step will surface any regression in
 the intervening TUI/dependency/UniFFI-0.32 commits. Native toolchains needed:
 Rust 1.91+, Swift 6, JDK 17 + Android SDK, Node 20 + pnpm.
+
+`./scripts/verify.sh` passed in full on `6a55829` (plan 002 branch) on
+2026-09-06. Local gotcha for executors on this machine: `bindings/kotlin`
+needs `JAVA_HOME` pointing at a JDK 17 and `ANDROID_HOME` set (Gradle 8.13
+does not run on the default JDK 24). Export both in the same shell command as
+`./scripts/verify.sh`.
 
 Not covered by CI and therefore not machine-verifiable by any plan: the Expo
 native module files (`bindings/expo/ios/*.swift`,
