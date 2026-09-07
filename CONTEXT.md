@@ -36,6 +36,14 @@ User-provided wallet or address text inspected by the TUI, such as an Address, S
 
 The classified, redacted view of Pasted Material plus any metadata or derived addresses the SDK can safely show.
 
+## Key Source
+
+The seed phrase or extended key the TUI currently derives addresses from: the sample mnemonic, a generated mnemonic, or Pasted Material.
+
+## Address Explorer
+
+The TUI table of receive and change addresses derived from the Key Source for one account, with a cursor whose derivation path and public key are shown in full.
+
 ## Watch-only Derivation
 
 Address derivation from public extended key material without access to private keys.
