@@ -1015,6 +1015,11 @@ mod tests {
             theme::ACCENT,
             "selected row"
         );
+        assert_ne!(
+            colors_at(&buffer, "Never fund").0,
+            Color::DarkGray,
+            "notes use the terminal foreground, not bright black"
+        );
         Ok(())
     }
 
