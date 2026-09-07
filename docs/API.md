@@ -120,6 +120,20 @@ Example `compose-request.json`:
 }
 ```
 
+## Signing Envelopes
+
+A Signing Envelope describes the inputs a signer knows about; each input
+index may appear once and must exist in the unsigned transaction. P2PKH
+inputs carry a pay-to-pubkey-hash script pubkey; P2SH multisig inputs carry a
+redeem script whose hash matches the script pubkey. `sign_signing_envelope`
+signs only inputs the supplied WIF controls and errors when it controls
+none. `combine_signing_envelopes` and `finalize_signing_envelope` verify
+every signature (DER encoding, sighash flag, key ownership, and ECDSA
+validity against the legacy sighash) before accepting it, and finalization
+requires every transaction input to be described. A partial envelope may
+carry signatures for inputs it does not describe; those are verified when
+the envelope is finalized.
+
 ## Derivation Paths
 
 Account derivation follows Dogecoin BIP44:
