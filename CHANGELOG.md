@@ -12,6 +12,8 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
+- Redesigned the Ratatui TUI as a live address explorer. The fixed question/answer panels are replaced by a responsive layout (side by side from 80 columns, stacked below that) with a source panel, a receive/change address table that re-derives as you move, and a selected-address panel showing the derivation path and public key. New keys: `t` cycles networks, `:` jumps to an index, `x` returns to the sample mnemonic, `?` opens a key reference, and `Ctrl+C` quits from any mode. The paste inspector and passphrase prompt are masked popups. The `i`/`o`/`d` derivation keys and the `v` sample-validation key were removed because addresses now derive automatically, and `Esc` hides revealed secrets instead of quitting.
+- The TUI classifies testnet-style extended keys (`tprv`/`tpub`) as testnet instead of mainnet, and only offers regtest as the alternative network for them.
 - Refreshed Rust workspace dependencies within existing Cargo semver ranges.
 - Upgraded UniFFI to 0.32.0 (crate, binding generator, and generated Swift/Kotlin sources). Workspace MSRV is now Rust 1.91 because UniFFI 0.32 pulls `cargo-platform` 0.3.3. Rebuild native libraries together with these bindings or UniFFI checksum checks will fail.
 - Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
