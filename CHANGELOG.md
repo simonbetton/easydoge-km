@@ -23,6 +23,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 ### Security
 
 - Transaction signing and the Compose-and-Sign Transaction Builder now reject an unsupported sighash type (anything other than the six consensus-defined values) and reject `SIGHASH_SINGLE` for inputs without a matching output. Previously any `u32` was accepted, producing unspendable or, for the SIGHASH_SINGLE bug case, dangerously reusable signatures.
+- BIP39 passphrases are now NFKD-normalized before PBKDF2, matching the BIP39 specification and the bitcoinjs cross-check. Wallets previously derived through EasyDoge KM with a passphrase containing non-NFKD characters (precomposed accented letters, fullwidth or compatibility characters, ideographic spaces) will derive different keys after this release; those derivations were not reproducible by other BIP39 wallets. Sweep funds using a pre-release build before upgrading. ASCII and empty passphrases are unaffected.
 - Signing envelopes are now validated end to end: input descriptors must be unique and in range, P2SH redeem scripts must hash to their script pubkey, signing only covers inputs the key controls, combine/finalize verify every signature, and finalize requires every input to be described. Envelopes with forged or foreign signatures are rejected instead of producing invalid transactions.
 
 ## 0.1.0 - 2026-06-04

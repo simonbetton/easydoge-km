@@ -191,7 +191,7 @@ pub fn mnemonic_to_seed_hex(
     language: Language,
 ) -> Result<String> {
     let mnemonic = parse_mnemonic(phrase, language)?;
-    let seed = mnemonic.to_seed_normalized(passphrase.unwrap_or_default());
+    let seed = mnemonic.to_seed_normalized(&normalize(passphrase.unwrap_or_default()));
     Ok(hex::encode(seed))
 }
 
@@ -203,7 +203,7 @@ pub fn account_xpriv_from_mnemonic(
     account: u32,
 ) -> Result<AccountKeySet> {
     let mnemonic = parse_mnemonic(phrase, language)?;
-    let seed = mnemonic.to_seed_normalized(passphrase.unwrap_or_default());
+    let seed = mnemonic.to_seed_normalized(&normalize(passphrase.unwrap_or_default()));
     let secp = Secp256k1::new();
     let master = BtcXpriv::new_master(network.bip32_kind(), &seed)
         .map_err(|err| Error::Crypto(err.to_string()))?;
