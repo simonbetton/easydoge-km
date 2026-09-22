@@ -12,6 +12,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
+- Corrected documentation to distinguish implemented APIs from runtime test coverage, document current storage and passphrase limitations, and clarify native integration and release requirements.
 - Redesigned the Ratatui TUI as a live address explorer. The fixed question/answer panels are replaced by a responsive layout (side by side from 80 columns, stacked below that) with a source panel, a receive/change address table that re-derives as you move, and a selected-address panel showing the derivation path and public key. New keys: `t` cycles networks, `:` jumps to an index, `x` returns to the sample mnemonic, `?` opens a key reference, and `Ctrl+C` quits from any mode. The paste inspector and passphrase prompt are masked popups. The `i`/`o`/`d` derivation keys and the `v` sample-validation key were removed because addresses now derive automatically, and `Esc` hides revealed secrets instead of quitting.
 - The TUI classifies testnet-style extended keys (`tprv`/`tpub`) as testnet instead of mainnet, and only offers regtest as the alternative network for them.
 - Refreshed Rust workspace dependencies within existing Cargo semver ranges.
@@ -29,9 +30,11 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 - Transaction signing and the Compose-and-Sign Transaction Builder now reject an unsupported sighash type (anything other than the six consensus-defined values) and reject `SIGHASH_SINGLE` for inputs without a matching output. Previously any `u32` was accepted, producing unspendable or, for the SIGHASH_SINGLE bug case, dangerously reusable signatures.
 - BIP39 passphrases are now NFKD-normalized before PBKDF2, matching the BIP39 specification and the bitcoinjs cross-check. Wallets previously derived through EasyDoge KM with a passphrase containing non-NFKD characters (precomposed accented letters, fullwidth or compatibility characters, ideographic spaces) will derive different keys after this release; those derivations were not reproducible by other BIP39 wallets. Sweep funds using a pre-release build before upgrading. ASCII and empty passphrases are unaffected.
-- Signing envelopes are now validated end to end: input descriptors must be unique and in range, P2SH redeem scripts must hash to their script pubkey, signing only covers inputs the key controls, combine/finalize verify every signature, and finalize requires every input to be described. Envelopes with forged or foreign signatures are rejected instead of producing invalid transactions.
+- Signing envelopes now require unique, in-range input descriptors and P2SH redeem scripts that hash to their script pubkey. Signing only covers inputs the key controls. Signing and combining verify signatures for described inputs; partial envelopes can carry unverified signatures for other in-range inputs. Finalization requires every input to be described and verifies every signature.
 
-## 0.1.0 - 2026-06-04
+## Initial 0.1.0 implementation - 2026-06-04
+
+This records the initial implementation at package version `0.1.0`, not a published GitHub release.
 
 - Added Rust core Dogecoin key-management SDK.
 - Added BIP39 mnemonic generation, validation, and seed derivation.

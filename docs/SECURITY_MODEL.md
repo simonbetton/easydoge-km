@@ -22,27 +22,38 @@ Non-secret assets include:
 
 Extended public keys are not spending secrets, but they reveal wallet structure and should still be treated as sensitive user metadata.
 
-## Core Guarantees
+## Implemented Checks and Boundaries
 
 - The Rust core is the canonical implementation.
-- Generated bindings expose the same public behavior across Swift, Kotlin, and Expo.
-- CLI output redacts secret material by default.
+- Generated Swift/Kotlin bindings call the Rust FFI implementation; Expo adds handwritten converters and platform storage. The [API guide](API.md) lists coverage and wire-format differences.
+- Successful CLI output redacts mnemonics, seeds, xprivs, WIFs, and message signatures unless `--reveal` is used. This does not protect command-line arguments, shell history, request files, or arbitrary application logging.
 - Xpub derivation rejects hardened child paths.
 - Dogecoin-native extended-key prefixes are emitted by default.
 - BIP39 seed phrases and BIP39 seeds cannot be recovered from xprivs.
 - Signing rejects undefined sighash types and the SIGHASH_SINGLE output-index bug.
 - BIP39 seed phrases and passphrases are NFKD-normalized before seed derivation.
-- Signing envelopes are authenticated: input descriptors must match the unsigned transaction and each other, and every signature is verified before it is combined or finalized.
+- Signing-envelope descriptors must have unique, in-range input indices; P2SH scripts must match their redeem-script hashes. Signing and combining verify signatures for described inputs. Partial envelopes can carry unverified signatures for other in-range inputs. Finalization requires all inputs to be described and verifies all signatures.
+- Previous-output values and scripts are supplied by the caller, not authenticated against chain state. Internal envelope validation is not consensus or UTXO verification.
+
+Secret values cross APIs as ordinary strings and byte arrays. CLI display redaction does not imply automatic memory erasure, and not all Rust `Debug` or serialization output is redacted. Do not log secret-bearing records or requests.
 
 ## Storage Boundaries
 
 The Rust core does not provide durable secret storage. Platform packages provide storage adapters:
 
-- Swift uses Keychain-backed storage.
-- Kotlin uses Android Keystore-backed encryption; the Keystore-wrapped ciphertext is persisted in app-private, no-backup storage (`Context.noBackupFilesDir`) so Stored Wallet Handles survive process death. Keystore keys never leave the device, so records are intentionally excluded from Auto Backup.
-- Expo uses native module surfaces and should use the platform storage adapters in custom dev-client or EAS builds.
+- Swift stores mnemonic text in Keychain using `WhenUnlockedThisDeviceOnly`. Biometric protection requests the current biometric set; device-credential protection uses `userPresence`. The adapter reports `os-backed`, not a Secure Enclave guarantee.
+- Kotlin encrypts mnemonic text with AES-GCM and a key in Android Keystore. Apps use `AndroidKeystoreWalletSecretStore.persistent(context)`, which writes the ciphertext and IV to app-private, no-backup storage (`Context.noBackupFilesDir`) so Stored Wallet Handles survive process death. Keystore keys never leave the device, so records are intentionally excluded from Auto Backup. `inMemory()` is for tests and demos and does not survive process death.
+- Android requests StrongBox on API 28+ and falls back to standard Keystore. `hardware-backed` reports successful StrongBox key creation; `os-backed` is the fallback label, not proof that a device has no other hardware-backed Keystore.
+- Both Android prompt modes currently request the same authentication policy. The adapter does not launch or connect a `BiometricPrompt` flow to its cipher operations. Authenticated storage/export must be verified and integrated on device; selecting a protection enum alone does not provide that UI.
+- Expo calls these adapters directly in its native modules. The Android module uses the persistent store. Unrecognized protection strings fall back to `no-prompt`; TypeScript types alone do not enforce runtime values.
+
+The adapters store the mnemonic only, not its optional BIP39 passphrase. Applications must retain the handle and arrange recovery of both mnemonic and passphrase. Passing a different protection mode to export does not rewrite the access controls selected at storage time.
 
 Applications remain responsible for backup UX, user authentication policy, device compromise assumptions, and recovery flows.
+
+## Verification Limits
+
+The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrapper tests, Kotlin JVM wrapper tests, and numeric codec tests. Expo receives a TypeScript check against a local declaration. The suite does not compile the Expo native modules, test device Keychain/Keystore authentication or process-death recovery, or build mobile release artifacts. Passing it is not evidence of an independent security audit or production readiness.
 
 ## Operational Requirements
 

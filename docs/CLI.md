@@ -16,8 +16,8 @@ easydoge-km <command>
 
 Global flags:
 
-- `--json` — print structured JSON output
-- `--reveal` — show secrets (mnemonics, seeds, WIFs) that are redacted by default
+- `--json` — select JSON for commands with a text-output alternative; many commands always return JSON
+- `--reveal` — show mnemonics, seeds, xprivs, WIFs, and message signatures that are redacted by default (transaction hex is returned without this flag)
 
 Use `<command> --help` for subcommand flags. Derivation path conventions match [API.md](API.md).
 
@@ -45,7 +45,7 @@ easydoge-km --json tx compose --request-file compose-request.json
 
 The request uses the same shape as the Rust `ComposeTransactionRequest`: UTXOs use display/RPC txid hex, values are integer koinu, fee policy is `fee_rate_koinu_per_kb` plus `dust_threshold_koinu`, and transaction sizes are serialized bytes. Outputs can be Dogecoin address outputs, zero-value OP_RETURN data outputs, or `ExpertRawScript` outputs.
 
-The result includes selected inputs, skipped inputs, totals, fee, change details, estimated size, actual signed size when complete, unsigned tx hex, signed tx hex when all signatures are present, or a signing envelope when more multisig signatures are needed.
+The result includes selected inputs, skipped inputs, totals, fee, change details, estimated size, actual signed size when complete, unsigned tx hex, signed tx hex when all signatures are present, or a signing envelope when P2PKH or multisig signatures are missing. The reported totals depend on the UTXO values supplied in the request.
 
 ### Parity test vector
 
@@ -77,17 +77,17 @@ easydoge-km tui
 
 The TUI is an address explorer for whatever key material you give it. It opens on the public parity-vector sample mnemonic so there is something to explore straight away, and it derives addresses live: pick an account and index and the receive and change addresses are already on screen, together with the full derivation path and public key of the highlighted one.
 
-Press `?` at any time for the key reference. `q` or `Ctrl+C` quits.
+From the explorer, press `?` for the key reference or `q` to quit. In help, `q` closes help; in text-entry popups it is input. `Ctrl+C` quits from every mode.
 
 ### Layout
 
 - **Title bar**: the active network and whether secrets are currently revealed.
 - **Source**: what addresses derive from (the sample mnemonic, a generated mnemonic, or pasted material), its public metadata, and the account xpub in use.
-- **Addresses**: receive addresses (`…/0/index`) for the current account, with change addresses (`…/1/index`) beside them on terminals at least 120 columns wide. The cursor row is highlighted.
+- **Addresses**: the active branch's addresses (`…/0/index` for receive, `…/1/index` for change). When the table has enough space for both 34-character address columns and the index, it shows receive and change side by side. The cursor row is highlighted.
 - **Selected**: the derivation path, address, and public key of the cursor row for the active branch.
 - **Status row** and **hint row**: what the last key did, and which keys apply right now.
 
-Source and Addresses sit side by side from 80 columns up and stack on narrower terminals, which drop the Selected panel and the explanatory notes. Terminals smaller than 40×10 show a resize prompt instead.
+Source and Addresses sit side by side from 80 columns up and stack on narrower terminals, which drop the Selected panel. Source panels shorter than 12 inner rows omit explanatory notes. Terminals below 40 columns or 10 rows show a resize prompt instead.
 
 ### Paste inspector
 
@@ -107,7 +107,7 @@ Results are redacted by default:
 
 - Seed phrases and passphrases stay hidden until you press `r`, which renders the phrase as a numbered word grid. `Esc` hides them again.
 - Pasted xprivs and WIFs are never shown. Their public side is: the xpub, public key, address, network, depth, child number, and parent fingerprint.
-- Xpubs, addresses, public keys, and payload hashes are public metadata and always shown.
+- Xpubs, addresses, public keys, and payload hashes are not masked, though terminal size may clip the displayed metadata.
 - Address inspection reports every matching Dogecoin network and address kind (`p2pkh` or `p2sh`). Testnet and regtest share the same P2SH prefix.
 
 ### What addresses derive from
@@ -121,7 +121,7 @@ Every address is a P2PKH address derived from an account-level xpub with the rel
 | Account-level xpriv or xpub (depth 3) | the pasted key itself | relative, e.g. `m/0/5` | fixed by the key |
 | Extended keys at other depths, addresses, WIFs | none | — | — |
 
-Sources that cannot derive addresses say why in the Addresses panel. Moving the index, changing the account, or switching network re-derives immediately; the BIP39 seed stretch runs once per account rather than once per address.
+Sources that cannot derive addresses say why in the Addresses panel. Moving within the cached 64-index window uses existing rows; moving beyond it derives a new window. Changing the source, account, or network rebuilds the account context. For mnemonic sources, the BIP39 seed stretch runs during that rebuild, not for each address.
 
 ### Mnemonic source
 
@@ -154,6 +154,6 @@ Addresses from the sample mnemonic are deterministic, publicly known test materi
 | `:` | Jump to an index |
 | `Tab`, `←` / `→` | Switch between receive and change |
 | `a` / `z` | Account + / − |
-| `?` | Toggle the key reference |
+| `?` | Open the key reference from the explorer, or close it from help |
 | `Esc` | Close a popup, or hide revealed secrets |
-| `q`, `Ctrl+C` | Quit (`Ctrl+C` works inside popups too) |
+| `q`, `Ctrl+C` | `q` quits from the explorer; `Ctrl+C` quits from every mode |

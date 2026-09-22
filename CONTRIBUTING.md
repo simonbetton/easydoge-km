@@ -10,12 +10,18 @@ Install:
 - Swift 6 or newer for the Swift package checks
 - JDK 17 for Android/Kotlin checks
 - Node.js 20 or newer and pnpm for Expo TypeScript and bitcoinjs cross-checks
+- Bash and ripgrep for the verification scripts
+- Android SDK platform 36, with `ANDROID_HOME` or `bindings/kotlin/local.properties` pointing to the SDK
+
+Run the full suite on macOS with an Apple development toolchain: the Swift storage implementation imports Security and LocalAuthentication. The Android NDK and `cargo-ndk` are needed only for native Android artifact builds.
 
 Then run:
 
 ```sh
 ./scripts/verify.sh
 ```
+
+This regenerates the committed UniFFI sources. Review any resulting diff. Expo verification is TypeScript-only; the native Expo modules and device storage/authentication flows require separate integration tests. Kotlin tests use the host Rust library, not an Android device. To syntax-check every shell script, run `bash -c 'for script in scripts/*.sh; do bash -n "$script" || exit; done'`; the existing `bash -n scripts/*.sh` invocation checks only the first script.
 
 ## Development Rules
 

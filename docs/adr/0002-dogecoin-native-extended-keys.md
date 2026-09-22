@@ -10,9 +10,8 @@ Many HD-wallet tools use Bitcoin-style `xpub`/`xprv` prefixes, while Dogecoin Co
 
 ## Decision
 
-Export Dogecoin-native extended key serialization by default. Permit Bitcoin-style legacy imports only through explicit compatibility APIs that require the caller to supply the Dogecoin network.
+Export extended keys using the selected Dogecoin network's version bytes. Accept Bitcoin-style legacy prefixes through the normal `Xpriv`/`Xpub` operations, using the network carried in the key record; there is no separate compatibility-import API.
 
 ## Consequences
 
-Default exports match Dogecoin Core network constants. Compatibility imports remain possible without silently interpreting Bitcoin network prefixes as Dogecoin authority.
-
+Default exports use `dgpv`/`dgub` on mainnet and `tprv`/`tpub` on testnet and regtest. Legacy prefixes do not establish the caller's intended Dogecoin network. Callers must choose the correct network; the CLI defaults to mainnet, while the TUI first classifies extended keys by their prefix.

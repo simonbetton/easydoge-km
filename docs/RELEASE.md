@@ -1,15 +1,16 @@
 # Release Guide
 
-This guide describes how to cut an open-source release from the repository.
+This guide describes the intended release process and the current helper scripts. As checked on 2026-09-22, the GitHub repository has no tags or releases. Package version `0.1.0` and the changelog's implementation date do not establish a published release.
 
 ## Prerequisites
 
 - Rust 1.91 or newer (workspace MSRV); `rust-toolchain.toml` tracks stable.
 - Swift 6 or newer.
 - JDK 17.
-- Node.js 20 or newer.
-- Android SDK for Android package verification.
-- `cargo-ndk` for Android native release artifacts.
+- Node.js 20 or newer and pnpm.
+- Bash and ripgrep for verification.
+- Android SDK platform 36 for Android package verification, with `ANDROID_HOME` or `bindings/kotlin/local.properties` configured.
+- Android NDK, the corresponding Rust targets, and `cargo-ndk` for Android native release artifacts.
 - Xcode for Apple native release artifacts.
 
 ## Local Verification
@@ -20,13 +21,16 @@ Run:
 ./scripts/verify.sh
 ```
 
-This checks open-source readiness, Rust formatting, Rust tests, Clippy, Rust docs, generated UniFFI bindings, Swift tests, Expo TypeScript, and Android/Kotlin tests.
+Run the full suite on macOS. It checks required repository files/metadata, Rust formatting and tests, bitcoinjs cross-checks, Clippy, Rust builds/docs, generated UniFFI bindings, Swift tests, Expo TypeScript, and Kotlin JVM tests when the Gradle wrapper is executable. It regenerates committed binding sources, so inspect the resulting diff.
+
+It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. Its shell syntax command checks only the first expanded script; check each script separately when changing release helpers. A passing suite is not a security audit or proof of reproducible release binaries.
 
 ## Versioning
 
 Update all package versions together:
 
 - Rust crates under `crates/*/Cargo.toml`
+- Internal `easydoge-km` dependency versions in the CLI and FFI manifests, plus the resolved `Cargo.lock`
 - Expo package under `bindings/expo/package.json`
 - Expo iOS podspec under `bindings/expo/ios/EasyDogeKMExpo.podspec`
 - Android Gradle package metadata, once publishing is enabled
@@ -59,16 +63,25 @@ For source releases, consumers can build native libraries locally. Binary releas
 
 The release scripts are intentionally separate from `verify.sh` because they require platform toolchains and target SDKs.
 
+Build helpers:
+
+```sh
+./scripts/generate-bindings.sh
+./scripts/build-apple-xcframework.sh
+./scripts/build-android-native-libs.sh
+```
+
+The Apple helper rebuilds `dist/apple/` and creates `dist/apple/easydoge_km_ffi.xcframework` for arm64 iOS devices and arm64/x86_64 simulators. The Android helper writes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` libraries under `bindings/kotlin/easydoge-km/src/main/jniLibs`, targeting API 24 by default (`ANDROID_API` overrides it). Neither helper publishes a package or creates CLI binaries/checksums.
+
+Before distributing mobile packages, complete and verify their native integration. The Swift manifest uses a workspace `target/debug` linker path rather than an XCFramework binary target. Expo Android expects an included `:easydoge-km` Gradle project. The Expo podspec uses a workspace `target/release` path, does not declare the `EasyDogeKM` Swift module it imports, and its `ios/**/*` source glob is nested relative to a podspec already inside `ios/`. These are integration gaps, not steps automatically handled by the artifact scripts. See [bindings/README.md](../bindings/README.md).
+
 ## Publishing Order
 
-1. Run `./scripts/verify.sh`.
-2. Run `./scripts/package-release.sh` to package-check the core crate.
-3. Regenerate bindings and confirm no unexpected diff.
-4. Build native artifacts for target platforms.
-5. Create a signed git tag.
-6. Publish `easydoge-km`.
-7. Run `PACKAGE_DEPENDENT_CRATES=1 ./scripts/package-release.sh`.
-8. Publish `easydoge-km-ffi` and `easydoge-km-cli`.
-9. Publish Expo package.
-10. Attach native artifacts and checksums to the GitHub release.
-11. Update release notes with security-relevant changes and migration notes.
+1. Choose a version, update manifests/internal dependencies and release notes, and review the security limitations.
+2. Run `./scripts/package-release.sh`. It runs the full verification suite and `cargo package -p easydoge-km --allow-dirty`; it does not publish. Inspect binding diffs and ensure the release checkout is clean despite the helper's `--allow-dirty` flag.
+3. Complete the mobile integration described above, build target artifacts, and test the consuming iOS, Android, and Expo apps, including storage/authentication and recovery behavior.
+4. Build Expo JavaScript and declarations (`pnpm --dir bindings/expo install`, then `pnpm --dir bindings/expo run build`) and inspect the npm package contents. The workspace typecheck uses `--noEmit`, and the package has no automatic pre-publish build script.
+5. Create a signed git tag for the verified release commit. If using the current Expo podspec, its source tag is the bare version (for example `0.1.0`); keep the tag and podspec consistent.
+6. Publish `easydoge-km` and wait for that version to be available in the registry.
+7. Run `PACKAGE_DEPENDENT_CRATES=1 ./scripts/package-release.sh` to package-check the FFI and CLI crates against the published core, then publish those crates.
+8. Publish the validated mobile packages and attach native artifacts, CLI binaries, checksums, and migration notes to the GitHub release. Publishing is manual; the current CI workflow only verifies the workspace.

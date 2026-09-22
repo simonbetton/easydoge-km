@@ -6,7 +6,7 @@ A human-readable BIP39 mnemonic used as the user's backup secret.
 
 ## BIP39 Seed
 
-The binary seed derived from a Seed Phrase and optional passphrase.
+The binary seed derived from a Seed Phrase and optional passphrase. Both are NFKD-normalized before derivation. See [the API guide](docs/API.md#seed-and-storage-limitations).
 
 ## Extended Private Key
 
@@ -62,7 +62,7 @@ An unspent transaction output that can be selected as an input to a future trans
 
 ## Koinu
 
-The smallest Dogecoin amount unit.
+The smallest Dogecoin amount unit: 100,000,000 koinu equal 1 DOGE. Rust and UniFFI represent amounts as unsigned 64-bit integers; the Expo bridge uses canonical decimal strings.
 
 ## Script Pubkey
 
@@ -94,5 +94,4 @@ The choice of which UTXOs fund a transaction.
 
 ## Stored Wallet Handle
 
-An opaque reference to wallet secret material managed by a platform storage adapter.
-
+An opaque reference to mnemonic text managed by a platform storage adapter. It does not contain the mnemonic or optional passphrase and is not a recovery backup. Kotlin apps persist the encrypted record so the handle survives process death; the in-memory repository is for tests only. See [the security model](docs/SECURITY_MODEL.md#storage-boundaries).
