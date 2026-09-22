@@ -12,6 +12,8 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
+- Redesigned the Ratatui TUI as a live address explorer. The fixed question/answer panels are replaced by a responsive layout (side by side from 80 columns, stacked below that) with a source panel, a receive/change address table that re-derives as you move, and a selected-address panel showing the derivation path and public key. New keys: `t` cycles networks, `:` jumps to an index, `x` returns to the sample mnemonic, `?` opens a key reference, and `Ctrl+C` quits from any mode. The paste inspector and passphrase prompt are masked popups. The `i`/`o`/`d` derivation keys and the `v` sample-validation key were removed because addresses now derive automatically, and `Esc` hides revealed secrets instead of quitting.
+- The TUI classifies testnet-style extended keys (`tprv`/`tpub`) as testnet instead of mainnet, and only offers regtest as the alternative network for them.
 - Refreshed Rust workspace dependencies within existing Cargo semver ranges.
 - Upgraded UniFFI to 0.32.0 (crate, binding generator, and generated Swift/Kotlin sources). Workspace MSRV is now Rust 1.91 because UniFFI 0.32 pulls `cargo-platform` 0.3.3. Rebuild native libraries together with these bindings or UniFFI checksum checks will fail.
 - Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
@@ -20,11 +22,13 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Fixed
 
+- **Breaking (Expo)**: koinu amounts in the Expo API are now decimal strings (`Koinu`) instead of numbers, and every other integer field is validated on the native side. Previously values above 2^53 lost precision, negative or fractional values could wrap on Android or crash on iOS.
 - Android stored-wallet records (ciphertext and IV) are now persisted to app-private no-backup storage. Previously they lived only in process memory, so a `StoredWalletHandle` became unusable after the process was killed while the Keystore key lingered.
 
 ### Security
 
 - Transaction signing and the Compose-and-Sign Transaction Builder now reject an unsupported sighash type (anything other than the six consensus-defined values) and reject `SIGHASH_SINGLE` for inputs without a matching output. Previously any `u32` was accepted, producing unspendable or, for the SIGHASH_SINGLE bug case, dangerously reusable signatures.
+- Signing envelopes are now validated end to end: input descriptors must be unique and in range, P2SH redeem scripts must hash to their script pubkey, signing only covers inputs the key controls, combine/finalize verify every signature, and finalize requires every input to be described. Envelopes with forged or foreign signatures are rejected instead of producing invalid transactions.
 
 ## 0.1.0 - 2026-06-04
 

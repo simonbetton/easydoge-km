@@ -24,6 +24,7 @@
 - **Category**: bug / security (fund-amount integrity)
 - **Planned at**: commit `32f1e4d`, 2026-09-04
 - **Audit finding**: #3 (deep audit, evidence originally collected at `04e7499`, revalidated at `32f1e4d`)
+- **Executed**: 2026-09-07 by a dispatched executor; reviewed and approved. Commit `a429374` on branch `fix/expo-lossless-koinu` (worktree `.claude/worktrees/agent-a1c388586e715125a`), cut from `599ca98` and not rebased onto plan 005's branch; PR https://github.com/simonbetton/easydoge-km/pull/43. The Swift tests are wrapped in `@Suite struct WireCodecTests` so `swift test --filter WireCodecTests` selects them (reviewer-authorized adaptation). `Double` `AsyncFunction` parameters are supported by expo-modules-core (verified in the 3.0.18 sources: Kotlin `TypeConverterProvider` maps `Double::class`, Swift declares `extension Double: AnyArgument`); no on-device run was done because CI does not compile the Expo modules (finding 15).
 
 ## Why this matters
 
