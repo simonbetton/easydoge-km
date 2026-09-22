@@ -17,7 +17,7 @@ data class StoredWalletRecord(
 )
 
 class AndroidKeystoreWalletSecretStore(
-    private val repository: MutableMap<String, StoredWalletRecord> = mutableMapOf(),
+    private val repository: WalletRecordRepository,
 ) : WalletSecretStore {
     override suspend fun storeMnemonic(
         mnemonic: String,
@@ -26,26 +26,31 @@ class AndroidKeystoreWalletSecretStore(
         val id = java.util.UUID.randomUUID().toString()
         val alias = alias(id)
         val protectionLevel = createKey(alias, protection)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key(alias))
-        val ciphertext = cipher.doFinal(mnemonic.encodeToByteArray())
-        val handle = StoredWalletHandle(id)
-        repository[id] = StoredWalletRecord(handle, ciphertext, cipher.iv, protectionLevel)
-        return handle
+        try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, requireKey(alias))
+            val ciphertext = cipher.doFinal(mnemonic.encodeToByteArray())
+            val record = StoredWalletRecord(StoredWalletHandle(id), ciphertext, cipher.iv, protectionLevel)
+            repository.save(record)
+            return record.handle
+        } catch (error: Exception) {
+            deleteKey(alias)
+            throw error
+        }
     }
 
     override suspend fun exportMnemonic(
         handle: StoredWalletHandle,
         protection: StoredWalletProtection,
     ): String {
-        val record = repository[handle.id] ?: error("Stored wallet handle not found")
+        val record = repository.load(handle.id) ?: error("Stored wallet handle not found")
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, key(alias(handle.id)), GCMParameterSpec(128, record.iv))
+        cipher.init(Cipher.DECRYPT_MODE, requireKey(alias(handle.id)), GCMParameterSpec(128, record.iv))
         return cipher.doFinal(record.ciphertext).decodeToString()
     }
 
     override suspend fun protectionLevel(handle: StoredWalletHandle): StorageProtectionLevel =
-        repository[handle.id]?.protectionLevel ?: StorageProtectionLevel.Unsupported
+        repository.load(handle.id)?.protectionLevel ?: StorageProtectionLevel.Unsupported
 
     private fun createKey(alias: String, protection: StoredWalletProtection): StorageProtectionLevel {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
@@ -87,16 +92,29 @@ class AndroidKeystoreWalletSecretStore(
         return StorageProtectionLevel.OsBacked
     }
 
-    private fun key(alias: String): SecretKey {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        return keyStore.getKey(alias, null) as SecretKey
+    private fun requireKey(alias: String): SecretKey =
+        keyStore().getKey(alias, null) as? SecretKey
+            ?: error("Stored wallet key is missing or was invalidated")
+
+    private fun deleteKey(alias: String) {
+        runCatching { keyStore().deleteEntry(alias) }
     }
+
+    private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     private fun alias(id: String): String = "io.easydoge.km.wallet.$id"
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
+
+        /** Records persist in app-private, no-backup storage. Use this in apps. */
+        fun persistent(context: android.content.Context): AndroidKeystoreWalletSecretStore =
+            AndroidKeystoreWalletSecretStore(FileWalletRecordRepository.fromContext(context))
+
+        /** Records live only for the current process. Tests and demos only. */
+        fun inMemory(): AndroidKeystoreWalletSecretStore =
+            AndroidKeystoreWalletSecretStore(InMemoryWalletRecordRepository())
     }
 }
 
