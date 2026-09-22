@@ -34,7 +34,7 @@ Dogecoin-native xpriv/xpub version bytes are emitted by default. Legacy Bitcoin-
 | Multisig descriptors | yes | yes | yes | yes | yes |
 | Compose-and-sign transaction builder | yes | yes | yes | yes | yes |
 
-Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects; signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
+Swift and Kotlin expose typed UniFFI records directly through their native packages. Expo exposes the same data in camelCase JavaScript objects. Koinu amounts (`valueKoinu`, `previousOutputValueKoinu`, `feeRateKoinuPerKb`, `dustThresholdKoinu`, and the compose result totals) are canonical decimal strings because JavaScript numbers cannot represent every `u64`; use `koinuFromBigInt` / `koinuToBigInt` from the package for arithmetic. All other integers are JavaScript numbers that must be non-negative safe integers within the native range; out-of-range or non-integer values reject the promise with `Invalid <field>: …`. Signing envelope input kinds are `"p2pkh"` and `"p2sh-multisig"`.
 
 Seed phrases and passphrases are NFKD-normalized before PBKDF2, as BIP39 requires, so canonically equivalent Unicode input derives the same wallet across every surface and matches other BIP39 implementations.
 
@@ -121,6 +121,20 @@ Example `compose-request.json`:
   }
 }
 ```
+
+## Signing Envelopes
+
+A Signing Envelope describes the inputs a signer knows about; each input
+index may appear once and must exist in the unsigned transaction. P2PKH
+inputs carry a pay-to-pubkey-hash script pubkey; P2SH multisig inputs carry a
+redeem script whose hash matches the script pubkey. `sign_signing_envelope`
+signs only inputs the supplied WIF controls and errors when it controls
+none. `combine_signing_envelopes` and `finalize_signing_envelope` verify
+every signature (DER encoding, sighash flag, key ownership, and ECDSA
+validity against the legacy sighash) before accepting it, and finalization
+requires every transaction input to be described. A partial envelope may
+carry signatures for inputs it does not describe; those are verified when
+the envelope is finalized.
 
 ## Derivation Paths
 

@@ -11,7 +11,7 @@ public class EasyDogeKMModule: Module {
         AsyncFunction("generateMnemonic") { (options: [String: Any]?) in
             let opts = MnemonicOptions(
                 language: parseLanguage(options?["language"] as? String),
-                wordCount: UInt16(options?["wordCount"] as? Int ?? 24)
+                wordCount: try WireCodec.uint16(options?["wordCount"] ?? 24, field: "wordCount")
             )
             return try sdk.generateMnemonic(options: opts).asDictionary()
         }
@@ -24,13 +24,13 @@ public class EasyDogeKMModule: Module {
             try mnemonicToSeedHex(phrase: phrase, passphrase: passphrase, language: parseLanguage(language))
         }
 
-        AsyncFunction("accountKeysFromMnemonic") { (phrase: String, passphrase: String?, language: String, network: String, account: Int) in
+        AsyncFunction("accountKeysFromMnemonic") { (phrase: String, passphrase: String?, language: String, network: String, account: Double) in
             try sdk.accountKeys(
                 phrase: phrase,
                 passphrase: passphrase,
                 language: parseLanguage(language),
                 network: parseNetwork(network),
-                account: UInt32(account)
+                account: try WireCodec.uint32(account, field: "account")
             ).asDictionary()
         }
 
@@ -74,10 +74,10 @@ public class EasyDogeKMModule: Module {
             try sdk.inspectXpub(xpub: Xpub.fromDictionary(xpub)).asDictionary()
         }
 
-        AsyncFunction("createMultisigDescriptor") { (network: String, threshold: Int, cosignerXpubs: [[String: String]], childPath: String, sorted: Bool) in
+        AsyncFunction("createMultisigDescriptor") { (network: String, threshold: Double, cosignerXpubs: [[String: String]], childPath: String, sorted: Bool) in
             try sdk.createMultisigDescriptor(
                 network: parseNetwork(network),
-                threshold: UInt8(threshold),
+                threshold: try WireCodec.uint8(threshold, field: "threshold"),
                 cosignerXpubs: cosignerXpubs.map { Xpub.fromDictionary($0) },
                 childPath: childPath,
                 sorted: sorted
@@ -97,14 +97,14 @@ public class EasyDogeKMModule: Module {
             )
         }
 
-        AsyncFunction("signP2pkhTransaction") { (network: String, unsignedTxHex: String, inputIndex: Int, scriptPubkeyHex: String, wif: String, sighashType: Int) in
+        AsyncFunction("signP2pkhTransaction") { (network: String, unsignedTxHex: String, inputIndex: Double, scriptPubkeyHex: String, wif: String, sighashType: Double) in
             try sdk.signP2pkhTransaction(
                 network: parseNetwork(network),
                 unsignedTxHex: unsignedTxHex,
-                inputIndex: UInt64(inputIndex),
+                inputIndex: try WireCodec.uint64(inputIndex, field: "inputIndex"),
                 scriptPubkeyHex: scriptPubkeyHex,
                 wif: wif,
-                sighashType: UInt32(sighashType)
+                sighashType: try WireCodec.uint32(sighashType, field: "sighashType")
             ).asDictionary()
         }
 
@@ -331,21 +331,21 @@ private extension SignedTransaction {
 private extension SigningEnvelope {
     static func fromDictionary(_ value: [String: Any]) throws -> SigningEnvelope {
         SigningEnvelope(
-            version: UInt8(intValue(value["version"], default: 1)),
+            version: try WireCodec.uint8(value["version"] ?? 1, field: "version"),
             network: parseNetwork(value["network"] as? String),
             unsignedTxHex: value["unsignedTxHex"] as? String ?? "",
             inputs: try (value["inputs"] as? [[String: Any]] ?? []).map { try SigningEnvelopeInput.fromDictionary($0) },
-            signatures: (value["signatures"] as? [[String: Any]] ?? []).map { SigningEnvelopeSignature.fromDictionary($0) }
+            signatures: try (value["signatures"] as? [[String: Any]] ?? []).map { try SigningEnvelopeSignature.fromDictionary($0) }
         )
     }
 
-    func asDictionary() -> [String: Any] {
+    func asDictionary() throws -> [String: Any] {
         [
             "version": Int(version),
             "network": network.rawString,
             "unsignedTxHex": unsignedTxHex,
-            "inputs": inputs.map { $0.asDictionary() },
-            "signatures": signatures.map { $0.asDictionary() }
+            "inputs": try inputs.map { try $0.asDictionary() },
+            "signatures": try signatures.map { try $0.asDictionary() }
         ]
     }
 }
@@ -353,26 +353,26 @@ private extension SigningEnvelope {
 private extension SigningEnvelopeInput {
     static func fromDictionary(_ value: [String: Any]) throws -> SigningEnvelopeInput {
         SigningEnvelopeInput(
-            inputIndex: UInt64(intValue(value["inputIndex"], default: 0)),
+            inputIndex: try WireCodec.uint64(value["inputIndex"], field: "inputIndex"),
             kind: try SigningInputKind.fromRawString(value["kind"] as? String),
             scriptPubkeyHex: value["scriptPubkeyHex"] as? String ?? "",
             redeemScriptHex: value["redeemScriptHex"] as? String,
-            sighashType: UInt32(intValue(value["sighashType"], default: 1)),
-            previousOutputValueKoinu: uint64Optional(value["previousOutputValueKoinu"]),
-            multisigThreshold: uint8Optional(value["multisigThreshold"]),
+            sighashType: try WireCodec.uint32(value["sighashType"] ?? 1, field: "sighashType"),
+            previousOutputValueKoinu: try WireCodec.optionalKoinu(value["previousOutputValueKoinu"], field: "previousOutputValueKoinu"),
+            multisigThreshold: try WireCodec.optionalUInt8(value["multisigThreshold"], field: "multisigThreshold"),
             multisigPublicKeysHex: value["multisigPublicKeysHex"] as? [String] ?? []
         )
     }
 
-    func asDictionary() -> [String: Any] {
+    func asDictionary() throws -> [String: Any] {
         var value: [String: Any] = [
-            "inputIndex": Int(inputIndex),
+            "inputIndex": try WireCodec.safeInteger(inputIndex, field: "inputIndex"),
             "kind": kind.rawString,
             "scriptPubkeyHex": scriptPubkeyHex,
             "sighashType": Int(sighashType)
         ]
         value["redeemScriptHex"] = redeemScriptHex
-        value["previousOutputValueKoinu"] = previousOutputValueKoinu.map { Int($0) }
+        value["previousOutputValueKoinu"] = previousOutputValueKoinu.map { WireCodec.koinuString($0) }
         value["multisigThreshold"] = multisigThreshold.map { Int($0) }
         value["multisigPublicKeysHex"] = multisigPublicKeysHex
         return value
@@ -380,17 +380,17 @@ private extension SigningEnvelopeInput {
 }
 
 private extension SigningEnvelopeSignature {
-    static func fromDictionary(_ value: [String: Any]) -> SigningEnvelopeSignature {
+    static func fromDictionary(_ value: [String: Any]) throws -> SigningEnvelopeSignature {
         SigningEnvelopeSignature(
-            inputIndex: UInt64(intValue(value["inputIndex"], default: 0)),
+            inputIndex: try WireCodec.uint64(value["inputIndex"], field: "inputIndex"),
             publicKeyHex: value["publicKeyHex"] as? String ?? "",
             signatureHex: value["signatureHex"] as? String ?? ""
         )
     }
 
-    func asDictionary() -> [String: Any] {
+    func asDictionary() throws -> [String: Any] {
         [
-            "inputIndex": Int(inputIndex),
+            "inputIndex": try WireCodec.safeInteger(inputIndex, field: "inputIndex"),
             "publicKeyHex": publicKeyHex,
             "signatureHex": signatureHex
         ]
@@ -453,10 +453,10 @@ private extension ComposeTransactionRequest {
             network: parseNetwork(value["network"] as? String),
             utxos: try dictionaries(value["utxos"]).map { try SpendableUtxo.fromDictionary($0) },
             outputs: try dictionaries(value["outputs"]).map { try TransactionOutput.fromDictionary($0) },
-            feePolicy: FeePolicy.fromDictionary(dictionary(value["feePolicy"])),
+            feePolicy: try FeePolicy.fromDictionary(dictionary(value["feePolicy"])),
             coinSelection: try CoinSelectionStrategy.fromRawString(value["coinSelection"] as? String),
             change: (value["change"] as? [String: Any]).map { ChangeDestination.fromDictionary($0) },
-            options: TransactionOptions.fromDictionary(dictionary(value["options"]))
+            options: try TransactionOptions.fromDictionary(dictionary(value["options"]))
         )
     }
 }
@@ -465,12 +465,12 @@ private extension SpendableUtxo {
     static func fromDictionary(_ value: [String: Any]) throws -> SpendableUtxo {
         SpendableUtxo(
             txid: value["txid"] as? String ?? "",
-            vout: UInt32(intValue(value["vout"], default: 0)),
-            previousOutputValueKoinu: uint64Value(value["previousOutputValueKoinu"], default: 0),
+            vout: try WireCodec.uint32(value["vout"], field: "vout"),
+            previousOutputValueKoinu: try WireCodec.koinu(value["previousOutputValueKoinu"], field: "previousOutputValueKoinu"),
             scriptPubkeyHex: value["scriptPubkeyHex"] as? String ?? "",
             kind: try SigningInputKind.fromRawString(value["kind"] as? String),
             redeemScriptHex: value["redeemScriptHex"] as? String,
-            multisigThreshold: uint8Optional(value["multisigThreshold"]),
+            multisigThreshold: try WireCodec.optionalUInt8(value["multisigThreshold"], field: "multisigThreshold"),
             multisigPublicKeysHex: value["multisigPublicKeysHex"] as? [String] ?? [],
             signers: try dictionaries(value["signers"]).map { try UtxoSigner.fromDictionary($0) },
             manuallySelected: value["manuallySelected"] as? Bool ?? false
@@ -493,7 +493,7 @@ private extension TransactionOutput {
     static func fromDictionary(_ value: [String: Any]) throws -> TransactionOutput {
         TransactionOutput(
             kind: try TransactionOutputKind.fromRawString(value["kind"] as? String),
-            valueKoinu: uint64Value(value["valueKoinu"], default: 0),
+            valueKoinu: try WireCodec.koinu(value["valueKoinu"], field: "valueKoinu"),
             address: value["address"] as? String,
             opReturnDataHex: value["opReturnDataHex"] as? String,
             scriptHex: value["scriptHex"] as? String
@@ -502,10 +502,10 @@ private extension TransactionOutput {
 }
 
 private extension FeePolicy {
-    static func fromDictionary(_ value: [String: Any]) -> FeePolicy {
+    static func fromDictionary(_ value: [String: Any]) throws -> FeePolicy {
         FeePolicy(
-            feeRateKoinuPerKb: uint64Value(value["feeRateKoinuPerKb"], default: 0),
-            dustThresholdKoinu: uint64Value(value["dustThresholdKoinu"], default: 0)
+            feeRateKoinuPerKb: try WireCodec.koinu(value["feeRateKoinuPerKb"], field: "feeRateKoinuPerKb"),
+            dustThresholdKoinu: try WireCodec.koinu(value["dustThresholdKoinu"], field: "dustThresholdKoinu")
         )
     }
 }
@@ -521,35 +521,35 @@ private extension ChangeDestination {
 }
 
 private extension TransactionOptions {
-    static func fromDictionary(_ value: [String: Any]) -> TransactionOptions {
+    static func fromDictionary(_ value: [String: Any]) throws -> TransactionOptions {
         TransactionOptions(
-            version: Int32(intValue(value["version"], default: 1)),
-            lockTime: UInt32(intValue(value["lockTime"], default: 0)),
-            sequence: UInt32(uint64Value(value["sequence"], default: UInt64(UInt32.max))),
-            sighashType: UInt32(intValue(value["sighashType"], default: 1))
+            version: try WireCodec.int32(value["version"] ?? 1, field: "version"),
+            lockTime: try WireCodec.uint32(value["lockTime"] ?? 0, field: "lockTime"),
+            sequence: try WireCodec.uint32(value["sequence"] ?? 4294967295.0, field: "sequence"),
+            sighashType: try WireCodec.uint32(value["sighashType"] ?? 1, field: "sighashType")
         )
     }
 }
 
 private extension ComposeTransactionResult {
-    func asDictionary() -> [String: Any] {
+    func asDictionary() throws -> [String: Any] {
         var value: [String: Any] = [
             "network": network.rawString,
             "selectedInputs": selectedInputs.map { $0.asDictionary() },
             "skippedInputs": skippedInputs.map { $0.asDictionary() },
-            "inputTotalKoinu": Int(inputTotalKoinu),
-            "spendOutputTotalKoinu": Int(spendOutputTotalKoinu),
-            "changeAmountKoinu": Int(changeAmountKoinu),
-            "feeKoinu": Int(feeKoinu),
-            "estimatedSizeBytes": Int(estimatedSizeBytes),
+            "inputTotalKoinu": WireCodec.koinuString(inputTotalKoinu),
+            "spendOutputTotalKoinu": WireCodec.koinuString(spendOutputTotalKoinu),
+            "changeAmountKoinu": WireCodec.koinuString(changeAmountKoinu),
+            "feeKoinu": WireCodec.koinuString(feeKoinu),
+            "estimatedSizeBytes": try WireCodec.safeInteger(estimatedSizeBytes, field: "estimatedSizeBytes"),
             "dustChangeFoldedIntoFee": dustChangeFoldedIntoFee,
             "unsignedTxHex": unsignedTxHex
         ]
         value["changeAddress"] = changeAddress
         value["changeScriptPubkeyHex"] = changeScriptPubkeyHex
-        value["actualSizeBytes"] = actualSizeBytes.map { Int($0) }
+        value["actualSizeBytes"] = try actualSizeBytes.map { try WireCodec.safeInteger($0, field: "actualSizeBytes") }
         value["signedTxHex"] = signedTxHex
-        value["signingEnvelope"] = signingEnvelope?.asDictionary()
+        value["signingEnvelope"] = try signingEnvelope?.asDictionary()
         return value
     }
 }
@@ -559,7 +559,7 @@ private extension AuditedInput {
         [
             "txid": txid,
             "vout": Int(vout),
-            "previousOutputValueKoinu": Int(previousOutputValueKoinu),
+            "previousOutputValueKoinu": WireCodec.koinuString(previousOutputValueKoinu),
             "scriptPubkeyHex": scriptPubkeyHex,
             "kind": kind.rawString
         ]
@@ -571,47 +571,10 @@ private extension SkippedInput {
         [
             "txid": txid,
             "vout": Int(vout),
-            "previousOutputValueKoinu": Int(previousOutputValueKoinu),
+            "previousOutputValueKoinu": WireCodec.koinuString(previousOutputValueKoinu),
             "reason": reason
         ]
     }
-}
-
-private func intValue(_ value: Any?, default fallback: Int) -> Int {
-    if let int = value as? Int {
-        return int
-    }
-    if let double = value as? Double {
-        return Int(double)
-    }
-    return fallback
-}
-
-private func uint64Value(_ value: Any?, default fallback: UInt64) -> UInt64 {
-    if let uint64 = value as? UInt64 {
-        return uint64
-    }
-    if let int = value as? Int {
-        return UInt64(int)
-    }
-    if let double = value as? Double {
-        return UInt64(double)
-    }
-    if let number = value as? NSNumber {
-        return number.uint64Value
-    }
-    return fallback
-}
-
-private func uint64Optional(_ value: Any?) -> UInt64? {
-    if value == nil {
-        return nil
-    }
-    return uint64Value(value, default: 0)
-}
-
-private func uint8Optional(_ value: Any?) -> UInt8? {
-    uint64Optional(value).map { UInt8($0) }
 }
 
 private func dictionary(_ value: Any?) -> [String: Any] {
