@@ -20,6 +20,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - Upgraded `base64` from 0.22 to 0.23 for message signature encoding.
 - Upgraded the Expo TypeScript typecheck to 7.0.2 and pinned `rootDir` to `src` so emit still lands at `build/index.js`.
 - **Breaking (Kotlin)**: `AndroidKeystoreWalletSecretStore` no longer has a no-argument constructor. Use `AndroidKeystoreWalletSecretStore.persistent(context)` in apps or `.inMemory()` in tests. The Expo Android module now uses the persistent variant.
+- Refreshed the bitcoinjs cross-check harness lockfile so its transitive `valibot` dependency resolves to a release patched for GHSA-5qjj-4xww-7phc (moderate; verification tooling only, no shipped artifact was affected), and added the harness to the Dependabot configuration.
 
 ### Fixed
 

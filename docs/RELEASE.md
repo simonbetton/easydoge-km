@@ -25,6 +25,27 @@ Run the full suite on macOS. It checks required repository files/metadata, Rust 
 
 It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. Its shell syntax command checks only the first expanded script; check each script separately when changing release helpers. A passing suite is not a security audit or proof of reproducible release binaries.
 
+## Dependency Advisories
+
+`./scripts/verify.sh` does not query advisory databases, so a passing suite says nothing about known-vulnerable dependencies. Before a release, and whenever `tools/bitcoinjs-cross-check/pnpm-lock.yaml` changes, audit the bitcoinjs cross-check harness (network access required):
+
+```sh
+pnpm --dir tools/bitcoinjs-cross-check audit
+```
+
+The expected output is `No known vulnerabilities found`. The harness is private verification tooling and nothing from it ships in a release artifact, so an advisory there does not change SDK behavior; resolve it anyway, or record why it does not apply, so the independent cross-check stays trustworthy.
+
+When the patched version of a transitive dependency is inside the ranges its parents declare, refresh only that package and re-run the cross-check. Use pnpm 10, the major that CI activates:
+
+```sh
+corepack pnpm@10 --dir tools/bitcoinjs-cross-check update <package> --lockfile-only
+bash scripts/cross-check.sh
+```
+
+Review the lockfile diff; it should touch only that package. Do not add a `pnpm.overrides` block to the harness `package.json`: pnpm 11 no longer reads that field and then rejects the lockfile under `--frozen-lockfile`. If an override is ever unavoidable, put it in `tools/bitcoinjs-cross-check/pnpm-workspace.yaml`.
+
+Dependabot version updates watch the harness's direct dependencies only. Advisories in transitive dependencies surface through this audit, or through Dependabot alerts and security updates when those are enabled in the repository settings.
+
 ## Versioning
 
 Update all package versions together:
@@ -77,7 +98,7 @@ Before distributing mobile packages, complete and verify their native integratio
 
 ## Publishing Order
 
-1. Choose a version, update manifests/internal dependencies and release notes, and review the security limitations.
+1. Choose a version, update manifests/internal dependencies and release notes, review the security limitations, and check the [dependency advisories](#dependency-advisories).
 2. Run `./scripts/package-release.sh`. It runs the full verification suite and `cargo package -p easydoge-km --allow-dirty`; it does not publish. Inspect binding diffs and ensure the release checkout is clean despite the helper's `--allow-dirty` flag.
 3. Complete the mobile integration described above, build target artifacts, and test the consuming iOS, Android, and Expo apps, including storage/authentication and recovery behavior.
 4. Build Expo JavaScript and declarations (`pnpm --dir bindings/expo install`, then `pnpm --dir bindings/expo run build`) and inspect the npm package contents. The workspace typecheck uses `--noEmit`, and the package has no automatic pre-publish build script.
