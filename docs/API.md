@@ -147,10 +147,43 @@ requires every transaction input to be described and verifies every signature.
 Combining requires identical version, network, unsigned transaction hex, and
 input descriptors; it merges signatures, not differing descriptor sets.
 
+For P2SH multisig inputs the redeem script must be at most 520 bytes, the
+largest element a scriptSig may push; a larger script can never be spent and
+is rejected with `redeem script exceeds 520 bytes and cannot be spent`. When
+`multisig_public_keys_hex` is supplied it must list exactly the redeem
+script's public keys: the same keys, each the same number of times, in any
+order and either hex case. Finalization counts one signature per distinct
+public key towards the threshold.
+
 The validator checks internal consistency, not whether previous-output scripts
 or amounts match the blockchain. Callers must authenticate that UTXO data.
 The single-input `sign_p2pkh_transaction` API fills only the selected input's
 scriptSig; other inputs may still need signatures.
+
+## Multisig Descriptors
+
+`create_multisig_descriptor` derives one child public key per cosigner xpub at
+the shared non-hardened `child_path` and returns the threshold, the public keys
+in redeem-script order (lexicographically sorted when `sorted` is true), the
+redeem script, and its P2SH address. It rejects a request when:
+
+- A cosigner appears more than once. Distinctness is checked on the derived
+  public keys, so the same xpub supplied twice, or once with a Dogecoin prefix
+  and once with a legacy Bitcoin prefix, is a duplicate. A repeated key lets
+  one cosigner provide more than one of the required signatures, so the
+  threshold would overstate the number of independent signers.
+- There are more than 15 cosigners. A P2SH spend reveals the redeem script as
+  one pushed element, which consensus limits to 520 bytes. With compressed
+  keys 15 cosigners need 513 bytes and 16 would need 547, so a 16-cosigner
+  address could receive funds that can never be spent.
+- The threshold is zero or exceeds the cosigner count, or an xpub belongs to a
+  different network.
+
+Signing, combining, and finalizing still accept a redeem script created
+elsewhere that repeats a public key, so funds already held by such a script
+stay spendable when enough distinct cosigners sign. If the distinct keys
+cannot reach the threshold (for example a 2-of-2 over one key), the SDK cannot
+finalize that input.
 
 ## Derivation Paths
 

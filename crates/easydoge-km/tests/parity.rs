@@ -1049,3 +1049,281 @@ fn compose_builder_accepts_utxos_that_share_a_txid_but_differ_in_vout() {
     assert_eq!(vouts, vec![0, 1]);
     assert!(result.signed_tx_hex.is_some());
 }
+
+/// Account-level xpubs for accounts `0..count` of the public parity mnemonic.
+fn distinct_account_xpubs(count: u32) -> Vec<easydoge_km::Xpub> {
+    (0..count)
+        .map(|account| {
+            account_xpriv_from_mnemonic(
+                PHRASE,
+                Some("TREZOR"),
+                Language::English,
+                Network::Mainnet,
+                account,
+            )
+            .unwrap()
+            .xpub
+        })
+        .collect()
+}
+
+/// Hand-assembles `OP_m <33-byte key>... OP_n OP_CHECKMULTISIG` so tests can
+/// describe redeem scripts the SDK itself refuses to create.
+fn multisig_redeem_script_hex(threshold: u8, public_keys_hex: &[String]) -> String {
+    let pushes = public_keys_hex
+        .iter()
+        .map(|key| format!("21{key}"))
+        .collect::<String>();
+    format!(
+        "{:02x}{pushes}{:02x}ae",
+        0x50 + threshold,
+        0x50 + public_keys_hex.len()
+    )
+}
+
+/// A one-input P2SH multisig Signing Envelope over the parity transaction
+/// whose script pubkey commits to `redeem_script_hex`.
+fn p2sh_multisig_envelope(
+    redeem_script_hex: &str,
+    multisig_threshold: Option<u8>,
+    multisig_public_keys_hex: Vec<String>,
+) -> SigningEnvelope {
+    let redeem_script = hex::decode(redeem_script_hex).unwrap();
+    SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: parity_unsigned_tx_hex(),
+        inputs: vec![SigningEnvelopeInput {
+            input_index: 0,
+            kind: SigningInputKind::P2shMultisig,
+            script_pubkey_hex: format!(
+                "a914{}87",
+                hex::encode(hash160::Hash::hash(&redeem_script).to_byte_array())
+            ),
+            redeem_script_hex: Some(redeem_script_hex.to_owned()),
+            sighash_type: 1,
+            previous_output_value_koinu: Some(100_000_000),
+            multisig_threshold,
+            multisig_public_keys_hex,
+        }],
+        signatures: vec![],
+    }
+}
+
+#[test]
+fn multisig_descriptor_rejects_the_same_cosigner_xpub_twice() {
+    let xpubs = distinct_account_xpubs(2);
+    let repeated = vec![xpubs[0].clone(), xpubs[1].clone(), xpubs[0].clone()];
+    for sorted in [true, false] {
+        let error = create_multisig_descriptor(Network::Mainnet, 2, &repeated, "m/0/7", sorted)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("duplicate cosigner public key"),
+            "sorted={sorted}: {error}"
+        );
+    }
+}
+
+#[test]
+fn multisig_descriptor_rejects_a_legacy_prefixed_copy_of_a_cosigner_xpub() {
+    let xpubs = distinct_account_xpubs(2);
+    // Same key and chain code, re-encoded with the Bitcoin `xpub` version
+    // bytes the SDK also accepts: a different string, the same cosigner.
+    let mut payload = bitcoin::base58::decode_check(&xpubs[0].encoded).unwrap();
+    payload[0..4].copy_from_slice(&[0x04, 0x88, 0xb2, 0x1e]);
+    let legacy_copy = easydoge_km::Xpub {
+        network: Network::Mainnet,
+        encoded: bitcoin::base58::encode_check(&payload),
+    };
+    assert_ne!(legacy_copy.encoded, xpubs[0].encoded);
+
+    let error = create_multisig_descriptor(
+        Network::Mainnet,
+        2,
+        &[xpubs[0].clone(), xpubs[1].clone(), legacy_copy],
+        "m/0/7",
+        true,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("duplicate cosigner public key"),
+        "{error}"
+    );
+}
+
+#[test]
+fn multisig_descriptor_rejects_more_than_fifteen_cosigners() {
+    let error = create_multisig_descriptor(
+        Network::Mainnet,
+        2,
+        &distinct_account_xpubs(16),
+        "m/0/7",
+        true,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("P2SH multisig supports at most 15 cosigners"),
+        "{error}"
+    );
+}
+
+#[test]
+fn multisig_descriptor_accepts_fifteen_distinct_cosigners_within_the_p2sh_push_limit() {
+    let descriptor = create_multisig_descriptor(
+        Network::Mainnet,
+        2,
+        &distinct_account_xpubs(15),
+        "m/0/7",
+        true,
+    )
+    .unwrap();
+    assert_eq!(descriptor.cosigner_count, 15);
+    assert_eq!(descriptor.public_keys_hex.len(), 15);
+    // 1 (OP_2) + 15 * 34 (push + compressed key) + 1 (OP_15) + 1 (OP_CHECKMULTISIG)
+    assert_eq!(descriptor.redeem_script_hex.len() / 2, 513);
+
+    // The largest descriptor the SDK creates is accepted by its own spend path.
+    let envelope = p2sh_multisig_envelope(
+        &descriptor.redeem_script_hex,
+        Some(2),
+        descriptor.public_keys_hex.clone(),
+    );
+    let error = finalize_signing_envelope(&envelope).unwrap_err();
+    assert!(error.to_string().contains("has no signatures"), "{error}");
+}
+
+#[test]
+fn signing_envelope_rejects_redeem_script_above_the_p2sh_push_limit() {
+    let public_keys_hex = distinct_account_xpubs(16)
+        .iter()
+        .map(|xpub| {
+            derive_address_from_xpub(xpub, "m/0/7")
+                .unwrap()
+                .public_key_hex
+        })
+        .collect::<Vec<_>>();
+    let redeem_script_hex = multisig_redeem_script_hex(2, &public_keys_hex);
+    assert_eq!(redeem_script_hex.len() / 2, 547);
+    let envelope = p2sh_multisig_envelope(&redeem_script_hex, Some(2), public_keys_hex);
+
+    let signing = sign_signing_envelope(&envelope, &parity_wif()).unwrap_err();
+    assert!(
+        signing.to_string().contains("exceeds 520 bytes"),
+        "{signing}"
+    );
+    let combining = combine_signing_envelopes(std::slice::from_ref(&envelope)).unwrap_err();
+    assert!(
+        combining.to_string().contains("exceeds 520 bytes"),
+        "{combining}"
+    );
+    let finalizing = finalize_signing_envelope(&envelope).unwrap_err();
+    assert!(
+        finalizing.to_string().contains("exceeds 520 bytes"),
+        "{finalizing}"
+    );
+}
+
+#[test]
+fn signing_envelope_requires_public_key_metadata_to_list_exactly_the_redeem_script_keys() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let a = fixture.descriptor.public_keys_hex[0].clone();
+    let b = fixture.descriptor.public_keys_hex[1].clone();
+
+    // Script keys [A, A, B]; metadata [A, B, B] has the same length and only
+    // names keys that appear in the script, but it is a different key list.
+    let repeated_script = multisig_redeem_script_hex(2, &[a.clone(), a.clone(), b.clone()]);
+    let wrong_counts = p2sh_multisig_envelope(
+        &repeated_script,
+        Some(2),
+        vec![a.clone(), b.clone(), b.clone()],
+    );
+    let error = sign_signing_envelope(&wrong_counts, &fixture.wifs[0]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("multisig public key metadata does not match redeem script"),
+        "{error}"
+    );
+
+    // Script keys [A, B]; metadata [A, A] hides cosigner B.
+    let mut hidden_cosigner = fixture.envelope.clone();
+    hidden_cosigner.inputs[0].multisig_public_keys_hex = vec![a.clone(), a.clone()];
+    let error = sign_signing_envelope(&hidden_cosigner, &fixture.wifs[0]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("multisig public key metadata does not match redeem script"),
+        "{error}"
+    );
+
+    // Order and hex case are not significant: the same keys still match.
+    let mut reordered = fixture.envelope.clone();
+    reordered.inputs[0].multisig_public_keys_hex = vec![b.to_uppercase(), a.to_uppercase()];
+    let signed = sign_signing_envelope(&reordered, &fixture.wifs[0]).unwrap();
+    assert_eq!(signed.signatures.len(), 1);
+}
+
+#[test]
+fn finalize_counts_case_variant_copies_of_one_signature_as_one_signer() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let mut partial = sign_signing_envelope(&fixture.envelope, &fixture.wifs[0]).unwrap();
+    let mut copy = partial.signatures[0].clone();
+    copy.public_key_hex = copy.public_key_hex.to_uppercase();
+    assert_ne!(copy.public_key_hex, partial.signatures[0].public_key_hex);
+    partial.signatures.push(copy);
+
+    let error = finalize_signing_envelope(&partial).unwrap_err();
+    assert!(error.to_string().contains("threshold is 2"), "{error}");
+}
+
+#[test]
+fn p2sh_multisig_with_a_repeated_key_finalizes_only_with_distinct_signers() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let a = fixture.descriptor.public_keys_hex[0].clone();
+    let b = fixture.descriptor.public_keys_hex[1].clone();
+    // A redeem script created elsewhere that lists cosigner A twice. The SDK
+    // refuses to create it but can still spend from it.
+    let redeem_script_hex = multisig_redeem_script_hex(2, &[a.clone(), a.clone(), b.clone()]);
+    let envelope = p2sh_multisig_envelope(&redeem_script_hex, Some(2), vec![]);
+
+    let only_a = sign_signing_envelope(&envelope, &fixture.wifs[0]).unwrap();
+    assert_eq!(only_a.signatures.len(), 1, "a repeated key signs once");
+    let error = finalize_signing_envelope(&only_a).unwrap_err();
+    assert!(error.to_string().contains("threshold is 2"), "{error}");
+
+    let both = sign_signing_envelope(&only_a, &fixture.wifs[1]).unwrap();
+    let signed = finalize_signing_envelope(&both).unwrap();
+    let tx: bitcoin::Transaction =
+        deserialize(&hex::decode(&signed.signed_tx_hex).unwrap()).unwrap();
+    let pushes = tx.input[0]
+        .script_sig
+        .instructions()
+        .map(|instruction| instruction.unwrap())
+        .map(|instruction| {
+            instruction
+                .push_bytes()
+                .map(|bytes| hex::encode(bytes.as_bytes()))
+        })
+        .collect::<Vec<_>>();
+    let signature_by = |key: &str| {
+        both.signatures
+            .iter()
+            .find(|signature| signature.public_key_hex == key)
+            .unwrap()
+            .signature_hex
+            .clone()
+    };
+    // OP_0, one signature per distinct signer in redeem-script key order, then
+    // the redeem script: OP_CHECKMULTISIG accepts exactly this shape.
+    assert_eq!(
+        pushes,
+        vec![
+            Some(String::new()),
+            Some(signature_by(&a)),
+            Some(signature_by(&b)),
+            Some(redeem_script_hex),
+        ]
+    );
+}

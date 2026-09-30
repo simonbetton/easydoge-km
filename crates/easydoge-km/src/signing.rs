@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::encoding::hash160_bytes;
 use crate::keys::secret_key_from_wif;
+use crate::multisig::MAX_P2SH_REDEEM_SCRIPT_BYTES;
 use crate::{Error, Network, Result};
 
 const SIGHASH_ALL: u32 = 0x01;
@@ -272,7 +273,12 @@ fn apply_signatures(
                         })
                         .unwrap_or(usize::MAX)
                 });
-                matching.dedup_by(|left, right| left.public_key_hex == right.public_key_hex);
+                // One signature per signer: hex case must not turn one public
+                // key into two.
+                matching.dedup_by(|left, right| {
+                    left.public_key_hex
+                        .eq_ignore_ascii_case(&right.public_key_hex)
+                });
                 if matching.len() < usize::from(metadata.threshold) {
                     return Err(Error::InvalidTransaction(format!(
                         "input {} has {} valid multisig signatures, threshold is {}",
@@ -553,18 +559,22 @@ fn multisig_metadata(
             ));
         }
     }
-    if !input.multisig_public_keys_hex.is_empty()
-        && (input.multisig_public_keys_hex.len() != parsed.public_keys_hex.len()
-            || !input.multisig_public_keys_hex.iter().all(|key| {
-                parsed
-                    .public_keys_hex
-                    .iter()
-                    .any(|parsed_key| parsed_key.eq_ignore_ascii_case(key))
-            }))
-    {
-        return Err(Error::InvalidTransaction(
-            "multisig public key metadata does not match redeem script".to_owned(),
-        ));
+    if !input.multisig_public_keys_hex.is_empty() {
+        // Compare as multisets: same keys, same number of times each, in any
+        // order and any hex case.
+        let mut supplied = input
+            .multisig_public_keys_hex
+            .iter()
+            .map(|key| key.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        supplied.sort_unstable();
+        let mut expected = parsed.public_keys_hex.clone();
+        expected.sort_unstable();
+        if supplied != expected {
+            return Err(Error::InvalidTransaction(
+                "multisig public key metadata does not match redeem script".to_owned(),
+            ));
+        }
     }
     Ok(MultisigMetadata {
         threshold: input.multisig_threshold.unwrap_or(parsed.threshold),
@@ -575,6 +585,11 @@ fn multisig_metadata(
 fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
     let bytes = hex::decode(redeem_script_hex)
         .map_err(|err| Error::Serialization(format!("invalid redeem script hex: {err}")))?;
+    if bytes.len() > MAX_P2SH_REDEEM_SCRIPT_BYTES {
+        return Err(Error::InvalidTransaction(
+            "redeem script exceeds 520 bytes and cannot be spent".to_owned(),
+        ));
+    }
     if bytes.len() < 3 {
         return Err(Error::InvalidTransaction(
             "invalid multisig redeem script".to_owned(),

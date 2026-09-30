@@ -33,6 +33,7 @@ Extended public keys are not spending secrets, but they reveal wallet structure 
 - Signing rejects undefined sighash types and the SIGHASH_SINGLE output-index bug.
 - BIP39 seed phrases and passphrases are NFKD-normalized before seed derivation.
 - Signing-envelope descriptors must have unique, in-range input indices; P2SH scripts must match their redeem-script hashes. Signing and combining verify signatures for described inputs. Partial envelopes can carry unverified signatures for other in-range inputs. Finalization requires all inputs to be described and verifies all signatures.
+- Multisig descriptors require distinct cosigner public keys and at most 15 cosigners, so the threshold counts independent signers and the redeem script stays within the 520-byte P2SH push limit. Signing envelopes reject redeem scripts above that limit and public-key metadata that is not exactly the redeem script's key list. Redeem scripts created elsewhere with a repeated key can still be spent; finalization counts one signature per distinct public key.
 - The Compose-and-Sign Transaction Builder rejects a request that lists the same UTXO outpoint (`txid:vout`) more than once, so a repeated entry cannot inflate the reported input total or yield a transaction with a repeated input. It does not check that an outpoint exists or is unspent.
 - Previous-output values and scripts are supplied by the caller, not authenticated against chain state. Internal envelope validation is not consensus or UTXO verification.
 
