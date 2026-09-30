@@ -2857,3 +2857,749 @@ fn compose_builder_rejects_wif_whose_compression_does_not_match_the_p2pkh_utxo()
         "{error}"
     );
 }
+
+// ---- Funding and signing behavior pinned before the linear-time refactor ----
+//
+// These tests describe what the Compose-and-Sign Transaction Builder and the
+// Signing Envelope functions did before their internals were restructured.
+// They must pass unchanged before and after that change.
+
+/// A copy of the request's first UTXO (the parity P2PKH UTXO and its WIF
+/// signer) at a new outpoint: txid `serial + 1` as 64 hex digits, vout 0.
+fn parity_utxo_with_serial(
+    request: &ComposeTransactionRequest,
+    serial: usize,
+    previous_output_value_koinu: u64,
+) -> SpendableUtxo {
+    SpendableUtxo {
+        txid: format!("{:064x}", serial + 1),
+        vout: 0,
+        previous_output_value_koinu,
+        ..request.utxos[0].clone()
+    }
+}
+
+/// A 2-of-2 P2SH Multisig UTXO from the shared fixture, signed by `wifs` in
+/// the order given.
+fn two_of_two_utxo_signed_by(
+    fixture: &TwoOfTwoFixture,
+    txid: &str,
+    previous_output_value_koinu: u64,
+    wifs: &[&str],
+) -> SpendableUtxo {
+    SpendableUtxo {
+        txid: txid.to_owned(),
+        vout: 0,
+        previous_output_value_koinu,
+        script_pubkey_hex: fixture.envelope.inputs[0].script_pubkey_hex.clone(),
+        kind: SigningInputKind::P2shMultisig,
+        redeem_script_hex: Some(fixture.descriptor.redeem_script_hex.clone()),
+        multisig_threshold: Some(2),
+        multisig_public_keys_hex: fixture.descriptor.public_keys_hex.clone(),
+        signers: wifs
+            .iter()
+            .map(|wif| UtxoSigner {
+                kind: UtxoSignerKind::Wif,
+                wif: Some((*wif).to_owned()),
+                xpriv: None,
+                derivation_path: None,
+            })
+            .collect(),
+        manually_selected: false,
+    }
+}
+
+/// `(previous_output_value_koinu, reason)` of every skipped input, in the
+/// order the result lists them.
+fn skipped_values_and_reasons(
+    result: &easydoge_km::ComposeTransactionResult,
+) -> Vec<(u64, String)> {
+    result
+        .skipped_inputs
+        .iter()
+        .map(|skipped| (skipped.previous_output_value_koinu, skipped.reason.clone()))
+        .collect()
+}
+
+fn selected_input_values(result: &easydoge_km::ComposeTransactionResult) -> Vec<u64> {
+    result
+        .selected_inputs
+        .iter()
+        .map(|input| input.previous_output_value_koinu)
+        .collect()
+}
+
+/// `(input_index, public_key_hex)` of every signature, in envelope order.
+fn signature_inputs_and_keys(envelope: &SigningEnvelope) -> Vec<(usize, String)> {
+    envelope
+        .signatures
+        .iter()
+        .map(|signature| (signature.input_index, signature.public_key_hex.clone()))
+        .collect()
+}
+
+#[test]
+fn compose_builder_reports_the_first_invalid_utxo_in_selection_order_and_ignores_unreached_ones() {
+    // Three P2PKH UTXOs: a valid 300M one, a 200M one with a malformed txid,
+    // and a 100M one that wrongly carries a redeem script. UTXOs are validated
+    // only when Coin Selection reaches them, in selection order.
+    let mut request = compose_request_base(&"a1".repeat(32), 300_000_000);
+    let mut malformed_txid = parity_utxo_with_serial(&request, 1, 200_000_000);
+    malformed_txid.txid = "zz".repeat(32);
+    let mut stray_redeem_script = parity_utxo_with_serial(&request, 2, 100_000_000);
+    stray_redeem_script.redeem_script_hex = Some("51".to_owned());
+    request.utxos.push(malformed_txid);
+    request.utxos.push(stray_redeem_script);
+
+    // One input is enough: the two invalid UTXOs are never validated and are
+    // reported as skipped.
+    for strategy in [
+        CoinSelectionStrategy::LargestFirst,
+        CoinSelectionStrategy::MinInputs,
+    ] {
+        request.coin_selection = strategy;
+        let result = compose_and_sign_transaction(&request).unwrap();
+        assert_eq!(selected_input_values(&result), vec![300_000_000]);
+        assert_eq!(
+            skipped_values_and_reasons(&result),
+            vec![
+                (200_000_000, "not selected by strategy".to_owned()),
+                (100_000_000, "not selected by strategy".to_owned()),
+            ],
+            "{strategy:?}"
+        );
+    }
+
+    // Two inputs are needed: the second UTXO in selection order is the one
+    // with the malformed txid, so its error surfaces, not the third UTXO's.
+    request.outputs[0].value_koinu = 350_000_000;
+    for strategy in [
+        CoinSelectionStrategy::LargestFirst,
+        CoinSelectionStrategy::MinInputs,
+    ] {
+        request.coin_selection = strategy;
+        let error = compose_and_sign_transaction(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid display txid hex"),
+            "{strategy:?}: {error}"
+        );
+    }
+
+    // Smallest first reaches the 100M UTXO before anything else.
+    request.coin_selection = CoinSelectionStrategy::SmallestFirst;
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("P2PKH UTXO must not include redeem script"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_validates_a_utxo_before_adding_its_value_to_the_input_total() {
+    // The first UTXO is 193 koinu short of the spend plus fee, so a second one
+    // is needed, and adding any second value overflows the input total.
+    let first_value = u64::MAX - 1_000;
+    let mut request = compose_request_base(&"b1".repeat(32), first_value);
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+    request.outputs[0].value_koinu = first_value;
+    let second = parity_utxo_with_serial(&request, 1, 5_000);
+    request.utxos.push(second);
+
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(error.to_string().contains("amount overflow"), "{error}");
+
+    // When that second UTXO is also invalid, its validation error comes first.
+    request.utxos[1].txid = "zz".repeat(32);
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error.to_string().contains("invalid display txid hex"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_lists_skipped_inputs_in_request_order_for_every_value_strategy() {
+    // Request order: 30M, 80M, 50M, 10M, 60M.
+    let mut request = compose_request_base(&"c1".repeat(32), 30_000_000);
+    for (serial, value) in [80_000_000u64, 50_000_000, 10_000_000, 60_000_000]
+        .into_iter()
+        .enumerate()
+    {
+        let utxo = parity_utxo_with_serial(&request, serial, value);
+        request.utxos.push(utxo);
+    }
+    let not_selected = |values: &[u64]| {
+        values
+            .iter()
+            .map(|value| (*value, "not selected by strategy".to_owned()))
+            .collect::<Vec<_>>()
+    };
+
+    request.outputs[0].value_koinu = 100_000_000;
+    for strategy in [
+        CoinSelectionStrategy::LargestFirst,
+        CoinSelectionStrategy::MinInputs,
+    ] {
+        request.coin_selection = strategy;
+        let result = compose_and_sign_transaction(&request).unwrap();
+        // Selected in selection order; skipped in request order.
+        assert_eq!(
+            selected_input_values(&result),
+            vec![80_000_000, 60_000_000],
+            "{strategy:?}"
+        );
+        assert_eq!(
+            skipped_values_and_reasons(&result),
+            not_selected(&[30_000_000, 50_000_000, 10_000_000]),
+            "{strategy:?}"
+        );
+        assert!(result.signed_tx_hex.is_some(), "{strategy:?}");
+    }
+
+    request.outputs[0].value_koinu = 85_000_000;
+    request.coin_selection = CoinSelectionStrategy::SmallestFirst;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(
+        selected_input_values(&result),
+        vec![10_000_000, 30_000_000, 50_000_000]
+    );
+    assert_eq!(
+        skipped_values_and_reasons(&result),
+        not_selected(&[80_000_000, 60_000_000])
+    );
+    assert_eq!(result.input_total_koinu, 90_000_000);
+}
+
+#[test]
+fn compose_builder_manual_selection_reports_only_the_unselected_utxos_it_visited() {
+    // Pins current behavior, which the maintainers are reviewing separately.
+    // Request order: 40M (manual), 10M, 90M, 70M (manual), 20M (manual),
+    // 95M (manual). Candidates are visited smallest first:
+    //   10M  not manually selected -> reported, in visiting order
+    //   20M  selected
+    //   40M  selected; 60M now covers the 55M spend, so selection stops.
+    // Manually selected UTXOs that were not needed (70M, 95M) are then
+    // reported in request order. The 90M UTXO is not manually selected and
+    // sorts after the stopping point, so it is not reported at all.
+    let mut request = compose_request_base(&"d1".repeat(32), 40_000_000);
+    request.utxos[0].manually_selected = true;
+    for (serial, (value, manually_selected)) in [
+        (10_000_000u64, false),
+        (90_000_000, false),
+        (70_000_000, true),
+        (20_000_000, true),
+        (95_000_000, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut utxo = parity_utxo_with_serial(&request, serial, value);
+        utxo.manually_selected = manually_selected;
+        request.utxos.push(utxo);
+    }
+    request.coin_selection = CoinSelectionStrategy::ManualSelectedInputs;
+    request.outputs[0].value_koinu = 55_000_000;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(selected_input_values(&result), vec![20_000_000, 40_000_000]);
+    assert_eq!(
+        skipped_values_and_reasons(&result),
+        vec![
+            (10_000_000, "not manually selected".to_owned()),
+            (70_000_000, "not selected by strategy".to_owned()),
+            (95_000_000, "not selected by strategy".to_owned()),
+        ]
+    );
+    assert!(result.signed_tx_hex.is_some());
+}
+
+#[test]
+fn compose_builder_emits_envelope_signatures_by_input_and_then_in_signer_order() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let parity_public_key_hex = address_from_wif(Network::Mainnet, &parity_wif())
+        .unwrap()
+        .public_key_hex;
+    // Input 0: 2-of-2 multisig, signers listed second key first.
+    // Input 1: P2PKH with its signer. Input 2: P2PKH without a signer, which
+    // keeps the result a Signing Envelope.
+    let mut request = compose_request_base(&"e1".repeat(32), 200_000_000);
+    let mut unsigned_p2pkh = parity_utxo_with_serial(&request, 0, 100_000_000);
+    unsigned_p2pkh.signers = vec![];
+    request.utxos.push(unsigned_p2pkh);
+    request.utxos.push(two_of_two_utxo_signed_by(
+        &fixture,
+        &"e2".repeat(32),
+        300_000_000,
+        &[&fixture.wifs[1], &fixture.wifs[0]],
+    ));
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+    request.outputs[0].value_koinu = 550_000_000;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(
+        selected_input_values(&result),
+        vec![300_000_000, 200_000_000, 100_000_000]
+    );
+    assert!(result.signed_tx_hex.is_none());
+    assert!(result.actual_size_bytes.is_none());
+    let envelope = result.signing_envelope.expect("incomplete result");
+    assert_eq!(
+        envelope
+            .inputs
+            .iter()
+            .map(|input| input.input_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        signature_inputs_and_keys(&envelope),
+        vec![
+            (0, fixture.descriptor.public_keys_hex[1].clone()),
+            (0, fixture.descriptor.public_keys_hex[0].clone()),
+            (1, parity_public_key_hex.clone()),
+        ]
+    );
+
+    // The envelope is usable as returned: the missing signer completes it.
+    let completed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    assert_eq!(
+        signature_inputs_and_keys(&completed)[3],
+        (2, parity_public_key_hex)
+    );
+    finalize_signing_envelope(&completed).unwrap();
+}
+
+#[test]
+fn compose_builder_signs_each_input_once_per_distinct_signer_and_matches_the_envelope_path() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    // The first cosigner is listed three times; it must sign once.
+    let mut request = compose_request_base(&"f1".repeat(32), 100_000_000);
+    request.utxos = vec![two_of_two_utxo_signed_by(
+        &fixture,
+        &"f1".repeat(32),
+        100_000_000,
+        &[
+            &fixture.wifs[0],
+            &fixture.wifs[0],
+            &fixture.wifs[1],
+            &fixture.wifs[0],
+        ],
+    )];
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+    let signed_tx_hex = result.signed_tx_hex.expect("both cosigners signed");
+    assert!(result.signing_envelope.is_none());
+    assert_eq!(
+        result.actual_size_bytes,
+        Some(signed_tx_hex.len() as u64 / 2)
+    );
+
+    // Signing the same unsigned transaction through the Signing Envelope
+    // functions gives the same bytes.
+    let mut envelope = two_of_two_fixture(&result.unsigned_tx_hex, 0).envelope;
+    envelope = sign_signing_envelope(&envelope, &fixture.wifs[0]).unwrap();
+    envelope = sign_signing_envelope(&envelope, &fixture.wifs[1]).unwrap();
+    assert_eq!(
+        finalize_signing_envelope(&envelope).unwrap().signed_tx_hex,
+        signed_tx_hex
+    );
+
+    // With only one cosigner (listed twice) the envelope holds one signature.
+    request.utxos[0]
+        .signers
+        .retain(|signer| signer.wif.as_deref() == Some(fixture.wifs[0].as_str()));
+    assert_eq!(request.utxos[0].signers.len(), 3);
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert!(result.signed_tx_hex.is_none());
+    let envelope = result.signing_envelope.expect("one of two signatures");
+    assert_eq!(
+        signature_inputs_and_keys(&envelope),
+        vec![(0, fixture.descriptor.public_keys_hex[0].clone())]
+    );
+}
+
+#[test]
+fn signing_envelope_appends_new_signatures_in_input_index_order_after_existing_ones() {
+    // Both inputs of the two-input transaction belong to the parity key.
+    // Descriptors are listed input 1 first; signing still goes input 0 first.
+    let descriptor = |input_index: usize| SigningEnvelopeInput {
+        input_index,
+        ..p2pkh_envelope().inputs[0].clone()
+    };
+    let mut envelope = p2pkh_envelope();
+    envelope.unsigned_tx_hex = two_input_unsigned_tx_hex();
+    envelope.inputs = vec![descriptor(1), descriptor(0)];
+
+    let signed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    assert_eq!(
+        signed
+            .signatures
+            .iter()
+            .map(|signature| signature.input_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(signed.inputs, envelope.inputs);
+
+    // An envelope that already holds the input-1 signature keeps it first and
+    // gains only the input-0 signature.
+    let mut partially_signed = envelope.clone();
+    partially_signed.signatures = vec![signed.signatures[1].clone()];
+    let resigned = sign_signing_envelope(&partially_signed, &parity_wif()).unwrap();
+    assert_eq!(
+        resigned.signatures,
+        vec![signed.signatures[1].clone(), signed.signatures[0].clone()]
+    );
+
+    // The key counts as having signed input 1 whatever the letter case of the
+    // public key hex recorded with that signature.
+    let mut upper_cased = partially_signed.clone();
+    upper_cased.signatures[0].public_key_hex = upper_cased.signatures[0]
+        .public_key_hex
+        .to_ascii_uppercase();
+    let resigned = sign_signing_envelope(&upper_cased, &parity_wif()).unwrap();
+    assert_eq!(
+        resigned.signatures,
+        vec![
+            upper_cased.signatures[0].clone(),
+            signed.signatures[0].clone()
+        ]
+    );
+}
+
+#[test]
+fn combine_keeps_the_first_envelope_as_is_and_appends_unseen_signatures_in_order() {
+    let descriptor = |input_index: usize| SigningEnvelopeInput {
+        input_index,
+        ..p2pkh_envelope().inputs[0].clone()
+    };
+    let mut envelope = p2pkh_envelope();
+    envelope.unsigned_tx_hex = two_input_unsigned_tx_hex();
+    envelope.inputs = vec![descriptor(0), descriptor(1)];
+    let signed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    let (input_0, input_1) = (signed.signatures[0].clone(), signed.signatures[1].clone());
+
+    // The first envelope repeats one signature; combining does not tidy it.
+    let mut first = envelope.clone();
+    first.signatures = vec![input_1.clone(), input_1.clone()];
+    // The second envelope repeats a new signature and one the first has.
+    let mut second = envelope.clone();
+    second.signatures = vec![input_0.clone(), input_1.clone(), input_0.clone()];
+
+    let combined = combine_signing_envelopes(&[first, second]).unwrap();
+    assert_eq!(combined.signatures, vec![input_1.clone(), input_1, input_0]);
+    finalize_signing_envelope(&combined).unwrap();
+}
+
+#[test]
+fn finalize_reports_the_first_invalid_signature_in_envelope_order() {
+    let descriptor = |input_index: usize| SigningEnvelopeInput {
+        input_index,
+        ..p2pkh_envelope().inputs[0].clone()
+    };
+    let mut envelope = p2pkh_envelope();
+    envelope.unsigned_tx_hex = two_input_unsigned_tx_hex();
+    envelope.inputs = vec![descriptor(0), descriptor(1)];
+    let signed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+
+    // Swap the two signatures between inputs: each is a genuine signature by
+    // the right key, but for the other input's hash. Listed input 1 first.
+    let mut swapped = signed.clone();
+    swapped.signatures = vec![
+        SigningEnvelopeSignature {
+            input_index: 1,
+            ..signed.signatures[0].clone()
+        },
+        SigningEnvelopeSignature {
+            input_index: 0,
+            ..signed.signatures[1].clone()
+        },
+    ];
+    let error = finalize_signing_envelope(&swapped).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("signature for input 1 does not verify against the transaction"),
+        "{error}"
+    );
+
+    // A valid signature for input 0 followed by a copy that does not verify
+    // and a bad signature for input 1: the copy is reported, because every
+    // entry is verified, in order, even when its input already has a valid
+    // signature.
+    let mut mixed = signed.clone();
+    mixed.signatures = vec![
+        signed.signatures[0].clone(),
+        SigningEnvelopeSignature {
+            input_index: 0,
+            ..signed.signatures[1].clone()
+        },
+        SigningEnvelopeSignature {
+            input_index: 1,
+            ..signed.signatures[0].clone()
+        },
+    ];
+    let error = finalize_signing_envelope(&mixed).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("signature for input 0 does not verify against the transaction"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_a_signer_whose_key_bytes_only_straddle_two_redeem_script_key_pushes() {
+    // Pins a corner of current behavior. The builder's ownership check looks
+    // for the signer's 33 public key bytes anywhere in the Redeem Script, so
+    // it accepts a key whose bytes straddle two neighbouring key pushes.
+    // Signing works from the parsed key list, finds that the key is not a
+    // cosigner, and the request fails there instead of yielding an envelope.
+    //
+    // The signer is the private key scalar 16, a public throwaway value. Its
+    // compressed public key contains the byte 0x21, the opcode that pushes a
+    // 33-byte key, which is what lets its bytes span two pushes.
+    let mut payload = vec![Network::Mainnet.prefixes().wif];
+    payload.extend_from_slice(&[0u8; 31]);
+    payload.extend_from_slice(&[16, 0x01]);
+    let wif = bs58::encode(payload).with_check().into_string();
+    let public_key = hex::decode(
+        address_from_wif(Network::Mainnet, &wif)
+            .unwrap()
+            .public_key_hex,
+    )
+    .unwrap();
+    assert_eq!(public_key.len(), 33);
+    let split = 1 + public_key[1..]
+        .iter()
+        .position(|byte| *byte == 0x21)
+        .expect("the public key of scalar 16 contains the byte 0x21");
+    // First pushed key: filler, then the signer's key bytes before the 0x21.
+    let mut first_key = vec![0x02u8; 33 - split];
+    first_key.extend_from_slice(&public_key[..split]);
+    // Second pushed key: the signer's key bytes after the 0x21, then filler.
+    let mut second_key = public_key[split + 1..].to_vec();
+    second_key.resize(33, 0x03);
+    // OP_1 <first key> <second key> OP_2 OP_CHECKMULTISIG
+    let redeem_script_hex = format!(
+        "5121{}21{}52ae",
+        hex::encode(&first_key),
+        hex::encode(&second_key)
+    );
+    assert!(redeem_script_hex.contains(&hex::encode(&public_key)));
+    let redeem_script = hex::decode(&redeem_script_hex).unwrap();
+
+    let mut request = compose_request_base(&"ab".repeat(32), 100_000_000);
+    let utxo = &mut request.utxos[0];
+    utxo.kind = SigningInputKind::P2shMultisig;
+    utxo.script_pubkey_hex = format!(
+        "a914{}87",
+        hex::encode(hash160::Hash::hash(&redeem_script).to_byte_array())
+    );
+    utxo.redeem_script_hex = Some(redeem_script_hex);
+    utxo.signers[0].wif = Some(wif);
+
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("WIF does not control any input in the signing envelope"),
+        "{error}"
+    );
+}
+
+// ---- Large requests: funding and signing stay proportional to their size ----
+//
+// These tests are functional. They assert results, never elapsed time, but
+// their sizes are chosen so that repeated per-input or per-signature work
+// (re-sizing every selected input for each candidate selection, re-hashing the
+// transaction for each signature) makes them take many seconds instead of
+// about one.
+
+/// An unsigned transaction that spends `input_count` outputs of the parity
+/// transaction's previous txid (vout 0, 1, 2, ...) and serializes to exactly
+/// `target_len` bytes: the parity output is followed by one zero-value output
+/// whose script is padding.
+fn padded_unsigned_tx_hex(input_count: usize, target_len: usize) -> String {
+    let mut tx: bitcoin::Transaction =
+        deserialize(&hex::decode(parity_unsigned_tx_hex()).unwrap()).unwrap();
+    let template = tx.input[0].clone();
+    tx.input = (0..input_count as u32)
+        .map(|vout| {
+            let mut input = template.clone();
+            input.previous_output.vout = vout;
+            input
+        })
+        .collect();
+    tx.output.push(bitcoin::TxOut {
+        value: bitcoin::Amount::from_sat(0),
+        script_pubkey: bitcoin::ScriptBuf::new(),
+    });
+    // An empty script has a 1-byte length prefix; the padding script is longer
+    // than 65,535 bytes and has a 5-byte prefix, hence the extra 4 bytes.
+    let padding = target_len - serialize(&tx).len() - 4;
+    tx.output[1].script_pubkey = bitcoin::ScriptBuf::from_bytes(vec![0x6a; padding]);
+    let bytes = serialize(&tx);
+    assert_eq!(bytes.len(), target_len);
+    hex::encode(bytes)
+}
+
+#[test]
+fn finalize_accepts_sixteen_signatures_on_every_input_of_a_maximum_size_transaction() {
+    const INPUTS: usize = 32;
+    const COPIES: usize = 16;
+    let descriptor = |input_index: usize| SigningEnvelopeInput {
+        input_index,
+        ..p2pkh_envelope().inputs[0].clone()
+    };
+    let mut envelope = p2pkh_envelope();
+    envelope.unsigned_tx_hex = padded_unsigned_tx_hex(INPUTS, 99_999);
+    envelope.inputs = (0..INPUTS).map(descriptor).collect();
+
+    let signed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    assert_eq!(signed.signatures.len(), INPUTS);
+
+    // Sixteen entries per input, interleaved so that the signatures of one
+    // input are never adjacent: 0, 1, ..., 31, 0, 1, ..., 31, ...
+    let mut crowded = signed.clone();
+    crowded.signatures = (0..COPIES)
+        .flat_map(|_| signed.signatures.iter().cloned())
+        .collect();
+    assert_eq!(crowded.signatures.len(), INPUTS * COPIES);
+
+    let combined = combine_signing_envelopes(&[signed.clone(), crowded.clone()]).unwrap();
+    assert_eq!(combined.signatures, signed.signatures);
+
+    let finalized = finalize_signing_envelope(&crowded).unwrap();
+    assert_eq!(
+        finalized.signed_tx_hex,
+        finalize_signing_envelope(&signed).unwrap().signed_tx_hex
+    );
+    let tx: bitcoin::Transaction =
+        deserialize(&hex::decode(&finalized.signed_tx_hex).unwrap()).unwrap();
+    assert_eq!(tx.input.len(), INPUTS);
+    assert!(tx.input.iter().all(|input| !input.script_sig.is_empty()));
+
+    // One entry that does not verify is still found among the 512.
+    let mut tampered = crowded;
+    let last = tampered.signatures.len() - 1;
+    tampered.signatures[last].input_index = 0;
+    let error = finalize_signing_envelope(&tampered).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("signature for input 0 does not verify against the transaction"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_reports_the_size_limit_after_sizing_each_signer_bearing_input_once() {
+    // 700 P2PKH UTXOs of 1,000,000 koinu, each with its WIF signer, and a
+    // payment that needs all of them. A P2PKH input is estimated at 149 bytes,
+    // so the 671st input takes the estimate to 12 + 671 * 149 + 34 = 100,025
+    // bytes and funding stops there, before anything is signed.
+    let mut request = compose_request_base(&"9a".repeat(32), 1_000_000);
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+    request.utxos = (0..700)
+        .map(|serial| parity_utxo_with_serial(&request, serial, 1_000_000))
+        .collect();
+    request.outputs[0].value_koinu = 699_000_000;
+
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error.to_string().contains(
+            "estimated transaction size is 100025 bytes, which exceeds the limit of 99999 bytes"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_funds_and_signs_hundreds_of_inputs_chosen_from_thousands_of_candidates() {
+    const CANDIDATES: usize = 3_000;
+    const NEEDED: usize = 200;
+    // Candidate values are 1,000,000 + serial koinu, so LargestFirst selects
+    // the 200 highest serials, highest first.
+    let mut request = compose_request_base(&"9b".repeat(32), 1_000_000);
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+    request.utxos = (0..CANDIDATES)
+        .map(|serial| parity_utxo_with_serial(&request, serial, 1_000_000 + serial as u64))
+        .collect();
+    let selected_total = (CANDIDATES - NEEDED..CANDIDATES)
+        .map(|serial| 1_000_000 + serial as u64)
+        .sum::<u64>();
+    // 10 + 200 * 149 + 34 = 29,844 bytes without change, 29,878 with change.
+    request.outputs[0].value_koinu = selected_total - 500_000;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(
+        selected_input_values(&result),
+        (CANDIDATES - NEEDED..CANDIDATES)
+            .rev()
+            .map(|serial| 1_000_000 + serial as u64)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(result.input_total_koinu, selected_total);
+    assert_eq!(result.estimated_size_bytes, 29_878);
+    assert_eq!(result.fee_koinu, 29_878);
+    assert_eq!(result.change_amount_koinu, 500_000 - 29_878);
+    // Every other candidate is reported, in request order.
+    assert_eq!(result.skipped_inputs.len(), CANDIDATES - NEEDED);
+    assert!(result
+        .skipped_inputs
+        .iter()
+        .enumerate()
+        .all(
+            |(serial, skipped)| skipped.previous_output_value_koinu == 1_000_000 + serial as u64
+                && skipped.reason == "not selected by strategy"
+        ));
+    assert!(result.signing_envelope.is_none());
+    let signed_tx_hex = result.signed_tx_hex.expect("every input has its signer");
+    let tx: bitcoin::Transaction = deserialize(&hex::decode(&signed_tx_hex).unwrap()).unwrap();
+    assert_eq!(tx.input.len(), NEEDED);
+    assert!(tx.input.iter().all(|input| !input.script_sig.is_empty()));
+    let actual_size_bytes = result.actual_size_bytes.unwrap();
+    assert_eq!(actual_size_bytes, signed_tx_hex.len() as u64 / 2);
+    assert!(actual_size_bytes <= result.estimated_size_bytes);
+}
+
+#[test]
+fn compose_builder_sizes_thousands_of_outputs_once() {
+    // 3,000 one-byte-script outputs (10 bytes each) funded by 300 of 350
+    // unsigned P2PKH UTXOs: 4 + 3 + 3 + 4 + 300 * 149 + 3,000 * 10 = 74,714
+    // bytes, plus 34 for the change output.
+    let mut request = compose_request_base(&"9c".repeat(32), 1_000_000);
+    request.coin_selection = CoinSelectionStrategy::SmallestFirst;
+    request.utxos[0].signers = vec![];
+    request.utxos = (0..350)
+        .map(|serial| parity_utxo_with_serial(&request, serial, 1_000_000))
+        .collect();
+    request.outputs = vec![
+        TransactionOutput {
+            kind: TransactionOutputKind::ExpertRawScript,
+            value_koinu: 99_800,
+            address: None,
+            op_return_data_hex: None,
+            script_hex: Some("51".to_owned()),
+        };
+        3_000
+    ];
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(result.spend_output_total_koinu, 299_400_000);
+    assert_eq!(result.selected_inputs.len(), 300);
+    assert_eq!(result.skipped_inputs.len(), 50);
+    assert_eq!(result.estimated_size_bytes, 74_748);
+    assert_eq!(result.fee_koinu, 74_748);
+    assert_eq!(result.change_amount_koinu, 600_000 - 74_748);
+    let envelope = result.signing_envelope.expect("no signers were supplied");
+    assert_eq!(envelope.inputs.len(), 300);
+    assert!(envelope.signatures.is_empty());
+}
