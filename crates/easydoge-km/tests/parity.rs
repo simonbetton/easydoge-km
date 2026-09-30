@@ -3,13 +3,13 @@ use bitcoin::hashes::{hash160, Hash};
 use easydoge_km::{
     account_xpriv_from_mnemonic, address_from_wif, combine_signing_envelopes,
     compose_and_sign_transaction, create_multisig_descriptor, derive_address_from_xpriv,
-    derive_address_from_xpub, derive_path_from_xpriv, finalize_signing_envelope, inspect_address,
-    inspect_xpriv, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
+    derive_address_from_xpub, derive_path_from_xpriv, finalize_signing_envelope, generate_mnemonic,
+    inspect_address, inspect_xpriv, mnemonic_to_seed_hex, sign_message, sign_p2pkh_transaction,
     sign_signing_envelope, validate_mnemonic, verify_message, wif_from_xpriv, AddressKind,
-    ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy, Language,
-    MultisigDescriptor, Network, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
-    SigningInputKind, SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind,
-    UtxoSigner, UtxoSignerKind,
+    ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy,
+    GeneratedMnemonic, Language, MnemonicOptions, MultisigDescriptor, Network, SigningEnvelope,
+    SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind, SpendableUtxo,
+    TransactionOptions, TransactionOutput, TransactionOutputKind, UtxoSigner, UtxoSignerKind,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -1519,5 +1519,103 @@ fn compose_builder_rejects_p2pkh_utxo_whose_script_pubkey_is_not_pay_to_pubkey_h
                 .contains("P2PKH UTXO script pubkey is not a pay-to-pubkey-hash script"),
             "script pubkey {script_pubkey_hex:?}: {error}"
         );
+    }
+}
+
+#[test]
+fn generated_mnemonic_debug_output_redacts_the_seed_phrase() {
+    let fixed = GeneratedMnemonic {
+        phrase: PHRASE.to_owned(),
+        language: Language::English,
+        word_count: 12,
+    };
+    for debug in [format!("{fixed:?}"), format!("{fixed:#?}")] {
+        assert!(!debug.contains("abandon"), "leaked the seed phrase");
+        assert!(debug.contains("[redacted]"), "no redaction marker");
+        assert!(debug.contains("English"), "dropped the language");
+        assert!(debug.contains("12"), "dropped the word count");
+    }
+
+    let generated = generate_mnemonic(MnemonicOptions {
+        language: Language::English,
+        word_count: 12,
+    })
+    .unwrap();
+    let debug = format!("{generated:?}");
+    assert!(!debug.contains(generated.phrase.as_str()));
+    assert!(debug.contains("[redacted]"));
+}
+
+#[test]
+fn generated_mnemonic_serialization_still_carries_the_seed_phrase() {
+    // Serialization is the explicit export path (CLI `--reveal`, request
+    // files). Only `Debug` is redacted.
+    let fixed = GeneratedMnemonic {
+        phrase: PHRASE.to_owned(),
+        language: Language::English,
+        word_count: 12,
+    };
+    let json = serde_json::to_value(&fixed).unwrap();
+    assert_eq!(json["phrase"].as_str().unwrap(), PHRASE);
+}
+
+#[test]
+fn account_key_set_debug_output_redacts_the_extended_private_key() {
+    let vectors = vectors();
+    let account = account_xpriv_from_mnemonic(
+        PHRASE,
+        Some("TREZOR"),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap();
+    let xpriv = vectors["mnemonic"]["account"]["xpriv"].as_str().unwrap();
+    let xpub = vectors["mnemonic"]["account"]["xpub"].as_str().unwrap();
+    assert_eq!(account.xpriv.encoded, xpriv);
+    for debug in [format!("{account:?}"), format!("{account:#?}")] {
+        assert!(!debug.contains(xpriv), "leaked the xpriv");
+        assert!(debug.contains("[redacted]"), "no redaction marker");
+        assert!(debug.contains(xpub), "dropped the public xpub");
+    }
+}
+
+#[test]
+fn compose_request_debug_output_redacts_signer_and_change_secrets() {
+    let vectors = vectors();
+    let wif = parity_wif();
+    let xpriv = easydoge_km::Xpriv {
+        network: Network::Mainnet,
+        encoded: vectors["mnemonic"]["account"]["xpriv"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let mut request = compose_request_base(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        100_000_000,
+    );
+    request.utxos[0].signers.push(UtxoSigner {
+        kind: UtxoSignerKind::XprivDerivation,
+        wif: None,
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/0/0".to_owned()),
+    });
+    request.change = Some(ChangeDestination {
+        address: None,
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/1/0".to_owned()),
+    });
+
+    for debug in [
+        format!("{request:?}"),
+        format!("{request:#?}"),
+        format!("{:?}", request.utxos[0]),
+        format!("{:?}", request.utxos[0].signers),
+        format!("{:?}", request.change),
+    ] {
+        assert!(!debug.contains(wif.as_str()), "leaked the WIF");
+        assert!(!debug.contains(xpriv.encoded.as_str()), "leaked the xpriv");
+        assert!(debug.contains("[redacted]"), "no redaction marker");
     }
 }

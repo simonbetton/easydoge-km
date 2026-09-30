@@ -33,14 +33,16 @@ pub struct MnemonicOptions {
     pub word_count: u16,
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct GeneratedMnemonic {
     pub phrase: String,
     pub language: Language,
     pub word_count: u16,
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct Xpriv {
     pub network: Network,
     pub encoded: String,
@@ -53,6 +55,7 @@ pub struct Xpub {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct AccountKeySet {
     pub network: Network,
     pub account: u32,
@@ -147,6 +150,7 @@ pub struct SigningEnvelopeSignature {
 }
 
 #[derive(Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct ComposeTransactionRequest {
     pub network: Network,
     pub utxos: Vec<SpendableUtxo>,
@@ -158,6 +162,7 @@ pub struct ComposeTransactionRequest {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct SpendableUtxo {
     pub txid: String,
     pub vout: u32,
@@ -172,6 +177,7 @@ pub struct SpendableUtxo {
 }
 
 #[derive(Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct UtxoSigner {
     pub kind: UtxoSignerKind,
     pub wif: Option<String>,
@@ -216,6 +222,7 @@ pub enum CoinSelectionStrategy {
 }
 
 #[derive(Clone, uniffi::Record)]
+#[uniffi::export(Debug)]
 pub struct ChangeDestination {
     pub address: Option<String>,
     pub xpriv: Option<Xpriv>,
@@ -763,6 +770,25 @@ impl TryFrom<SigningEnvelopeSignature> for easydoge_km::SigningEnvelopeSignature
             public_key_hex: value.public_key_hex,
             signature_hex: value.signature_hex,
         })
+    }
+}
+
+impl std::fmt::Debug for GeneratedMnemonic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneratedMnemonic")
+            .field("phrase", &"[redacted]")
+            .field("language", &self.language)
+            .field("word_count", &self.word_count)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Xpriv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Xpriv")
+            .field("network", &self.network)
+            .field("encoded", &"[redacted]")
+            .finish()
     }
 }
 

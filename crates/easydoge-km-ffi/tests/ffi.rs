@@ -2,9 +2,9 @@ use easydoge_km_ffi::{
     account_xpriv_from_mnemonic, combine_signing_envelopes, compose_and_sign_transaction,
     derive_address_from_xpub, finalize_signing_envelope, sign_message, sign_p2pkh_transaction,
     sign_signing_envelope, ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest,
-    FeePolicy, Language, Network, SigningEnvelope, SigningEnvelopeInput, SigningInputKind,
-    SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind, UtxoSigner,
-    UtxoSignerKind,
+    FeePolicy, GeneratedMnemonic, Language, Network, SigningEnvelope, SigningEnvelopeInput,
+    SigningInputKind, SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind,
+    UtxoSigner, UtxoSignerKind, Xpriv,
 };
 use serde_json::Value;
 
@@ -172,4 +172,97 @@ fn ffi_surface_exposes_compose_and_sign_builder() {
     assert!(result.signed_tx_hex.is_some());
     assert!(result.signing_envelope.is_none());
     assert_eq!(result.selected_inputs.len(), 1);
+}
+
+#[test]
+fn ffi_secret_records_redact_debug_output() {
+    let vectors = vectors();
+    let phrase = vectors["mnemonic"]["phrase"].as_str().unwrap();
+    let xpriv_text = vectors["mnemonic"]["account"]["xpriv"].as_str().unwrap();
+    let xpub_text = vectors["mnemonic"]["account"]["xpub"].as_str().unwrap();
+    let wif_text = vectors["mnemonic"]["account"]["wif"].as_str().unwrap();
+
+    let mnemonic = GeneratedMnemonic {
+        phrase: phrase.to_owned(),
+        language: Language::English,
+        word_count: 12,
+    };
+    let xpriv = Xpriv {
+        network: Network::Mainnet,
+        encoded: xpriv_text.to_owned(),
+    };
+    let keys = account_xpriv_from_mnemonic(
+        phrase.to_owned(),
+        Some("TREZOR".to_owned()),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap();
+    assert_eq!(keys.xpriv.encoded, xpriv_text);
+    let signer = UtxoSigner {
+        kind: UtxoSignerKind::Wif,
+        wif: Some(wif_text.to_owned()),
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/0/0".to_owned()),
+    };
+    let change = ChangeDestination {
+        address: None,
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/1/0".to_owned()),
+    };
+    let utxo = SpendableUtxo {
+        txid: "4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
+        vout: 0,
+        previous_output_value_koinu: 100_000_000,
+        script_pubkey_hex: vectors["transaction"]["script_pubkey_hex"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        kind: SigningInputKind::P2pkh,
+        redeem_script_hex: None,
+        multisig_threshold: None,
+        multisig_public_keys_hex: vec![],
+        signers: vec![signer.clone()],
+        manually_selected: false,
+    };
+    let request = ComposeTransactionRequest {
+        network: Network::Mainnet,
+        utxos: vec![utxo.clone()],
+        outputs: vec![],
+        fee_policy: FeePolicy {
+            fee_rate_koinu_per_kb: 1_000,
+            dust_threshold_koinu: 1,
+        },
+        coin_selection: CoinSelectionStrategy::MinInputs,
+        change: Some(change.clone()),
+        options: TransactionOptions {
+            version: 1,
+            lock_time: 0,
+            sequence: 0xffff_ffff,
+            sighash_type: 1,
+        },
+    };
+
+    let rendered = [
+        ("GeneratedMnemonic", format!("{mnemonic:?}")),
+        ("Xpriv", format!("{xpriv:?}")),
+        ("AccountKeySet", format!("{keys:?}")),
+        ("UtxoSigner", format!("{signer:?}")),
+        ("ChangeDestination", format!("{change:?}")),
+        ("SpendableUtxo", format!("{utxo:?}")),
+        ("ComposeTransactionRequest", format!("{request:?}")),
+        ("ComposeTransactionRequest pretty", format!("{request:#?}")),
+    ];
+    for (record, debug) in &rendered {
+        assert!(!debug.contains("abandon"), "{record} leaked the phrase");
+        assert!(!debug.contains(xpriv_text), "{record} leaked the xpriv");
+        assert!(!debug.contains(wif_text), "{record} leaked the WIF");
+        assert!(debug.contains("[redacted]"), "{record} is not redacted");
+    }
+
+    // Public fields stay visible so the output remains useful for debugging.
+    assert!(rendered[2].1.contains(xpub_text));
+    assert!(rendered[2].1.contains("m/44'/3'/0'"));
+    assert!(rendered[0].1.contains("English"));
 }

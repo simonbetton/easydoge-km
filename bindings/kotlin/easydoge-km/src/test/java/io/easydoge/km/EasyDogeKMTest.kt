@@ -3,12 +3,23 @@ package io.easydoge.km
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.BeforeClass
+import uniffi.easydoge_km_ffi.ChangeDestination
+import uniffi.easydoge_km_ffi.CoinSelectionStrategy
+import uniffi.easydoge_km_ffi.ComposeTransactionRequest
+import uniffi.easydoge_km_ffi.FeePolicy
+import uniffi.easydoge_km_ffi.GeneratedMnemonic
+import uniffi.easydoge_km_ffi.Language
 import uniffi.easydoge_km_ffi.Network
 import uniffi.easydoge_km_ffi.SigningEnvelope
 import uniffi.easydoge_km_ffi.SigningEnvelopeInput
 import uniffi.easydoge_km_ffi.SigningInputKind
+import uniffi.easydoge_km_ffi.SpendableUtxo
+import uniffi.easydoge_km_ffi.TransactionOptions
+import uniffi.easydoge_km_ffi.UtxoSigner
+import uniffi.easydoge_km_ffi.UtxoSignerKind
 import uniffi.easydoge_km_ffi.Xpub
 
 class EasyDogeKMTest {
@@ -92,6 +103,71 @@ class EasyDogeKMTest {
         )
         assertEquals(string(vectors, "multisig.p2sh_address"), descriptor.p2shAddress)
         assertEquals(string(vectors, "multisig.redeem_script_hex"), descriptor.redeemScriptHex)
+    }
+
+    @Test
+    fun secretBearingRecordsRedactToString() {
+        val vectors = parityVectors()
+        val phrase = string(vectors, "mnemonic.phrase")
+        val xprivText = string(vectors, "mnemonic.account.xpriv")
+        val wifText = string(vectors, "mnemonic.account.wif")
+
+        val keys = EasyDogeKM().accountKeys(
+            phrase = phrase,
+            passphrase = string(vectors, "mnemonic.passphrase"),
+        )
+        assertEquals(xprivText, keys.xpriv.encoded)
+        val signer = UtxoSigner(
+            kind = UtxoSignerKind.WIF,
+            wif = wifText,
+            xpriv = keys.xpriv,
+            derivationPath = "m/0/0",
+        )
+        val change = ChangeDestination(address = null, xpriv = keys.xpriv, derivationPath = "m/1/0")
+        val utxo = SpendableUtxo(
+            txid = "4444444444444444444444444444444444444444444444444444444444444444",
+            vout = 0u,
+            previousOutputValueKoinu = 100_000_000uL,
+            scriptPubkeyHex = string(vectors, "transaction.script_pubkey_hex"),
+            kind = SigningInputKind.P2PKH,
+            redeemScriptHex = null,
+            multisigThreshold = null,
+            multisigPublicKeysHex = emptyList(),
+            signers = listOf(signer),
+            manuallySelected = false,
+        )
+        val request = ComposeTransactionRequest(
+            network = Network.MAINNET,
+            utxos = listOf(utxo),
+            outputs = emptyList(),
+            feePolicy = FeePolicy(feeRateKoinuPerKb = 1_000uL, dustThresholdKoinu = 1uL),
+            coinSelection = CoinSelectionStrategy.MIN_INPUTS,
+            change = change,
+            options = TransactionOptions(version = 1, lockTime = 0u, sequence = 0xffffffffu, sighashType = 1u),
+        )
+        val generated = GeneratedMnemonic(phrase = phrase, language = Language.ENGLISH, wordCount = 12u.toUShort())
+
+        val rendered = mapOf(
+            "Xpriv.toString" to keys.xpriv.toString(),
+            "Xpriv template" to "${keys.xpriv}",
+            "List<Xpriv>" to listOf(keys.xpriv).toString(),
+            "AccountKeySet.toString" to keys.toString(),
+            "AccountKeySet template" to "$keys",
+            "GeneratedMnemonic.toString" to generated.toString(),
+            "UtxoSigner.toString" to signer.toString(),
+            "ChangeDestination.toString" to change.toString(),
+            "SpendableUtxo.toString" to utxo.toString(),
+            "ComposeTransactionRequest.toString" to request.toString(),
+        )
+        for ((label, text) in rendered) {
+            assertFalse(text.contains(xprivText), "$label leaked the xpriv")
+            assertFalse(text.contains(wifText), "$label leaked the WIF")
+            assertFalse(text.contains("abandon"), "$label leaked the seed phrase")
+            assertTrue(text.contains("[redacted]"), "$label has no redaction marker")
+        }
+
+        // Public fields stay visible.
+        assertTrue(keys.toString().contains(string(vectors, "mnemonic.account.xpub")))
     }
 
     companion object {

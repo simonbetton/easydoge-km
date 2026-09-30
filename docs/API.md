@@ -40,6 +40,19 @@ The non-negative rule applies to Expo inputs, including transaction `version` (0
 
 `inspectXpriv`/`inspectXpub` return `childNumber` as the unsigned BIP32 index on both platforms, so a hardened child is 2147483648 or greater (account `0'` is 2147483648). The table indicates which operations are exposed, not complete wire-level parity.
 
+## Secret Redaction in Debug Output
+
+Seven records can carry a seed phrase, extended private key, or WIF: `GeneratedMnemonic`, `Xpriv`, `AccountKeySet`, `UtxoSigner`, `ChangeDestination`, `SpendableUtxo`, and `ComposeTransactionRequest`. Their debug representations print `[redacted]` in place of the secret:
+
+| Surface | Redacted | Not redacted |
+| --- | --- | --- |
+| Rust | `{:?}` and `{:#?}` | serde serialization, field access |
+| Swift | `String(describing:)`, `"\(value)"`, `print`, `String(reflecting:)`, `debugPrint` | `dump`, `Mirror`, field access, debugger variable views |
+| Kotlin | `toString()`, string templates, `println` | field access, `componentN()`, reflection, serializers |
+| Expo | nothing: records are plain JavaScript objects | `console.log`, `JSON.stringify` |
+
+Swift and Kotlin obtain the text from the Rust library, so it uses Rust formatting on every platform, for example `Xpriv { network: Mainnet, encoded: "[redacted]" }`, and requires the native library to be loaded. Secrets passed or returned as bare strings (phrase and WIF arguments, `wif_from_xpriv`, `mnemonic_to_seed_hex`) are ordinary strings. Redaction is a safety net, not permission to log these values; see [SECURITY_MODEL.md](SECURITY_MODEL.md).
+
 ## Seed and Storage Limitations
 
 Mnemonic text and passphrases are NFKD-normalized before PBKDF2, as BIP39 requires, so canonically equivalent Unicode input derives the same wallet across every surface and matches other BIP39 implementations. Wallets derived before this normalization from a passphrase containing non-NFKD characters will not match; recover those with a pre-change build. ASCII and empty passphrases are unaffected.

@@ -698,6 +698,40 @@ mod tests {
     }
 
     #[test]
+    fn pasted_secret_material_debug_output_is_redacted() -> Result<()> {
+        let keys = account_xpriv_from_mnemonic(
+            SAMPLE_PHRASE,
+            Some(SAMPLE_PASSPHRASE),
+            Language::English,
+            Network::Mainnet,
+            0,
+        )?;
+        let classified_xpriv = classify(&keys.xpriv.encoded)?;
+        let Classified::Material(xpriv_material) = classified_xpriv.clone() else {
+            panic!("expected material");
+        };
+        let classified_wif = classify(PARITY_WIF)?;
+        let classified_seed = classify(SAMPLE_PHRASE)?;
+        let Classified::SeedPhrase(seed) = classified_seed.clone() else {
+            panic!("expected a seed phrase");
+        };
+
+        for debug in [
+            format!("{classified_xpriv:?}"),
+            format!("{:?}", Source::Pasted(xpriv_material)),
+            format!("{classified_wif:?}"),
+            format!("{classified_seed:?}"),
+            format!("{:?}", Source::Generated(seed.clone())),
+            format!("{:?}", Source::Pasted(Material::SeedPhrase(seed))),
+        ] {
+            assert!(!debug.contains(keys.xpriv.encoded.as_str()));
+            assert!(!debug.contains(PARITY_WIF));
+            assert!(!debug.contains("abandon"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn child_number_label_marks_hardened_children() {
         assert_eq!(child_number_label(0), "0");
         assert_eq!(child_number_label(HARDENED_OFFSET), "0' (2147483648)");

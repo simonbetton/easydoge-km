@@ -729,6 +729,20 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "easydoge_km_ffi"))
 
     }
+    external fun uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_composetransactionrequest_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_generatedmnemonic_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_spendableutxo_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_utxosigner_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+    external fun uniffi_easydoge_km_ffi_fn_method_xpriv_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
     external fun uniffi_easydoge_km_ffi_fn_func_account_xpriv_from_mnemonic(`phrase`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,`account`: Int,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_easydoge_km_ffi_fn_func_address_from_wif(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1272,6 +1286,15 @@ data class AccountKeySet (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(FfiConverterTypeAccountKeySet.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -1374,6 +1397,15 @@ data class ChangeDestination (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(FfiConverterTypeChangeDestination.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -1425,6 +1457,15 @@ data class ComposeTransactionRequest (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_composetransactionrequest_uniffi_trait_debug(FfiConverterTypeComposeTransactionRequest.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -1679,6 +1720,15 @@ data class GeneratedMnemonic (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_generatedmnemonic_uniffi_trait_debug(FfiConverterTypeGeneratedMnemonic.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -2183,6 +2233,15 @@ data class SpendableUtxo (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_spendableutxo_uniffi_trait_debug(FfiConverterTypeSpendableUtxo.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -2350,6 +2409,15 @@ data class UtxoSigner (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_utxosigner_uniffi_trait_debug(FfiConverterTypeUtxoSigner.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }
@@ -2442,6 +2510,15 @@ data class Xpriv (
 
 
 
+    // The local Rust `Display`/`Debug` implementation.
+    override fun toString(): String {
+        return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_easydoge_km_ffi_fn_method_xpriv_uniffi_trait_debug(FfiConverterTypeXpriv.lower(this),
+        _status)
+}
+    )
+    }
 
     companion object
 }

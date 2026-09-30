@@ -31,7 +31,7 @@ pub struct MnemonicOptions {
     pub word_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneratedMnemonic {
     pub phrase: String,
     pub language: Language,
@@ -97,6 +97,18 @@ pub struct Xpriv {
 pub struct Xpub {
     pub network: Network,
     pub encoded: String,
+}
+
+// `Debug` never prints the Seed Phrase. Serialization is the explicit
+// export path and still carries it.
+impl fmt::Debug for GeneratedMnemonic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeneratedMnemonic")
+            .field("phrase", &"[redacted]")
+            .field("language", &self.language)
+            .field("word_count", &self.word_count)
+            .finish()
+    }
 }
 
 impl fmt::Debug for Xpriv {

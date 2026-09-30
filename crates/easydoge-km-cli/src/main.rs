@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 mod tui;
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(name = "easydoge-km")]
 #[command(about = "Dogecoin key-management SDK engineer CLI")]
 struct Cli {
@@ -27,7 +27,7 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum Command {
     Mnemonic {
         #[command(subcommand)]
@@ -64,7 +64,7 @@ enum Command {
     Tui,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum MnemonicCommand {
     Generate {
         #[arg(long, default_value = "english")]
@@ -88,7 +88,7 @@ enum MnemonicCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum XprivCommand {
     FromMnemonic {
         #[arg(long)]
@@ -132,7 +132,7 @@ enum XprivCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum XpubCommand {
     Inspect {
         #[arg(long)]
@@ -150,7 +150,7 @@ enum XpubCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum AddressCommand {
     Derive {
         #[arg(long)]
@@ -170,7 +170,7 @@ enum AddressCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum WifCommand {
     Export {
         #[arg(long)]
@@ -186,7 +186,7 @@ enum WifCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum MultisigCommand {
     Create {
         #[arg(long)]
@@ -216,7 +216,7 @@ enum MultisigCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum TxCommand {
     SignP2pkh {
         #[arg(long)]
@@ -238,7 +238,7 @@ enum TxCommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum MessageCommand {
     Sign {
         #[arg(long)]
