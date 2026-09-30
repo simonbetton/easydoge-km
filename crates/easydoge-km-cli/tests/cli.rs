@@ -524,3 +524,64 @@ fn every_secret_bearing_subcommand_accepts_the_file_form() {
             .stderr(predicate::str::is_empty());
     }
 }
+
+/// A sparse file one byte larger than the CLI's 16 MiB request-file limit.
+/// `set_len` extends it without writing data, so this is instant.
+fn oversized_request_file(name: &str) -> std::path::PathBuf {
+    let file_name = format!("easydoge-km-{name}-{}.json", std::process::id());
+    let path = std::env::temp_dir().join(file_name);
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(16 * 1024 * 1024 + 1).unwrap();
+    path
+}
+
+#[test]
+fn tx_compose_rejects_request_file_larger_than_the_limit() {
+    let path = oversized_request_file("oversized-compose");
+    let mut command = Command::cargo_bin("easydoge-km").unwrap();
+    command
+        .args(["tx", "compose", "--request-file", path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "exceeds the limit of 16777216 bytes",
+        ));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn multisig_commands_reject_envelope_file_larger_than_the_limit() {
+    let path = oversized_request_file("oversized-envelope");
+    for subcommand in ["finalize", "combine"] {
+        let mut command = Command::cargo_bin("easydoge-km").unwrap();
+        command
+            .args([
+                "multisig",
+                subcommand,
+                "--envelope-file",
+                path.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "exceeds the limit of 16777216 bytes",
+            ));
+    }
+    let _ = fs::remove_file(path);
+}
+
+#[cfg(unix)]
+#[test]
+fn request_read_from_a_pipe_is_bounded_even_though_its_size_is_unknown() {
+    // A pipe reports no length up front, so only the bounded read can stop
+    // it. The input is exactly one byte over the limit.
+    let mut command = Command::cargo_bin("easydoge-km").unwrap();
+    command
+        .args(["tx", "compose", "--request-file", "/dev/stdin"])
+        .write_stdin(vec![b' '; 16 * 1024 * 1024 + 1])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "exceeds the limit of 16777216 bytes",
+        ));
+}

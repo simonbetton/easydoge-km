@@ -16,7 +16,7 @@ use std::str::FromStr;
 mod secret_input;
 mod tui;
 
-use secret_input::SecretInput;
+use secret_input::{read_bounded, SecretInput};
 
 #[derive(Parser)]
 #[command(name = "easydoge-km")]
@@ -752,12 +752,38 @@ fn print_json(value: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Largest compose-request or Signing Envelope file the CLI reads (16 MiB).
+/// CLI policy: comfortably above a request or envelope at the core limits in
+/// `easydoge_km::limits`, and small enough to parse in memory.
+const MAX_REQUEST_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Reads a UTF-8 text file, refusing anything larger than `max_bytes`. The
+/// metadata check rejects an oversized regular file without reading it; the
+/// bounded read covers inputs whose size is unknown up front (pipes, devices)
+/// and files that grow while being read.
+fn read_text_file_bounded(path: &str, max_bytes: u64) -> Result<String> {
+    let file = fs::File::open(path)?;
+    if file.metadata()?.len() > max_bytes {
+        anyhow::bail!("{path} exceeds the limit of {max_bytes} bytes");
+    }
+    let bytes = read_bounded(file, max_bytes).map_err(|error| {
+        // `read_bounded` reports an over-limit input as `InvalidData`; reading
+        // raw bytes produces no other `InvalidData` error.
+        if error.kind() == io::ErrorKind::InvalidData {
+            anyhow::anyhow!("{path} exceeds the limit of {max_bytes} bytes")
+        } else {
+            error.into()
+        }
+    })?;
+    Ok(String::from_utf8(bytes)?)
+}
+
 fn read_envelope(path: &str) -> Result<SigningEnvelope> {
-    let contents = fs::read_to_string(path)?;
+    let contents = read_text_file_bounded(path, MAX_REQUEST_FILE_BYTES)?;
     Ok(serde_json::from_str(&contents)?)
 }
 
 fn read_compose_request(path: &str) -> Result<ComposeTransactionRequest> {
-    let contents = fs::read_to_string(path)?;
+    let contents = read_text_file_bounded(path, MAX_REQUEST_FILE_BYTES)?;
     Ok(serde_json::from_str(&contents)?)
 }
