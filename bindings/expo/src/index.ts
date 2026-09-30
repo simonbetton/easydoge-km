@@ -323,4 +323,4 @@ export interface EasyDogeKMModule {
 const EasyDogeKM = requireNativeModule<EasyDogeKMModule>("EasyDogeKM");
 export default EasyDogeKM;
 
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule } from "expo";

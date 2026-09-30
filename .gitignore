@@ -7,6 +7,11 @@ node_modules
 /bindings/expo/build/
 /bindings/expo/node_modules/
 /bindings/expo/package-lock.json
+/bindings/expo/ios/vendor/
+/bindings/expo/android/vendor/
+/bindings/expo/vendor-manifest.json
+/bindings/expo/LICENSE
+/bindings/expo/*.tgz
 /bindings/generated/
 /tools/bitcoinjs-cross-check/node_modules/
 /bindings/kotlin/.gradle/
