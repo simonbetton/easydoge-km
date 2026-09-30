@@ -1,3 +1,5 @@
+use zeroize::Zeroizing;
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum FfiError {
     #[error("{reason}")]
@@ -285,6 +287,7 @@ pub fn generate_mnemonic(options: MnemonicOptions) -> FfiResult<GeneratedMnemoni
 
 #[uniffi::export]
 pub fn validate_mnemonic(phrase: String, language: Language) -> FfiResult<bool> {
+    let phrase = Zeroizing::new(phrase);
     easydoge_km::validate_mnemonic(&phrase, language.into()).map_err(Into::into)
 }
 
@@ -294,6 +297,8 @@ pub fn mnemonic_to_seed_hex(
     passphrase: Option<String>,
     language: Language,
 ) -> FfiResult<String> {
+    let phrase = Zeroizing::new(phrase);
+    let passphrase = Zeroizing::new(passphrase);
     easydoge_km::mnemonic_to_seed_hex(&phrase, passphrase.as_deref(), language.into())
         .map_err(Into::into)
 }
@@ -306,6 +311,8 @@ pub fn account_xpriv_from_mnemonic(
     network: Network,
     account: u32,
 ) -> FfiResult<AccountKeySet> {
+    let phrase = Zeroizing::new(phrase);
+    let passphrase = Zeroizing::new(passphrase);
     easydoge_km::account_xpriv_from_mnemonic(
         &phrase,
         passphrase.as_deref(),
@@ -373,6 +380,7 @@ pub fn wif_from_xpriv(xpriv: Xpriv) -> FfiResult<String> {
 
 #[uniffi::export]
 pub fn address_from_wif(network: Network, wif: String) -> FfiResult<WifInfo> {
+    let wif = Zeroizing::new(wif);
     easydoge_km::address_from_wif(network.into(), &wif)
         .map(Into::into)
         .map_err(Into::into)
@@ -402,6 +410,7 @@ pub fn create_multisig_descriptor(
 
 #[uniffi::export]
 pub fn sign_message(network: Network, wif: String, message: String) -> FfiResult<MessageSignature> {
+    let wif = Zeroizing::new(wif);
     easydoge_km::sign_message(network.into(), &wif, &message)
         .map(Into::into)
         .map_err(Into::into)
@@ -427,6 +436,7 @@ pub fn sign_p2pkh_transaction(
     wif: String,
     sighash_type: u32,
 ) -> FfiResult<SignedTransaction> {
+    let wif = Zeroizing::new(wif);
     easydoge_km::sign_p2pkh_transaction(
         network.into(),
         &unsigned_tx_hex,
@@ -443,6 +453,7 @@ pub fn sign_p2pkh_transaction(
 
 #[uniffi::export]
 pub fn sign_signing_envelope(envelope: SigningEnvelope, wif: String) -> FfiResult<SigningEnvelope> {
+    let wif = Zeroizing::new(wif);
     let envelope = envelope.try_into()?;
     easydoge_km::sign_signing_envelope(&envelope, &wif)
         .map(Into::into)
@@ -541,9 +552,9 @@ impl From<easydoge_km::Language> for Language {
 }
 
 impl From<easydoge_km::GeneratedMnemonic> for GeneratedMnemonic {
-    fn from(value: easydoge_km::GeneratedMnemonic) -> Self {
+    fn from(mut value: easydoge_km::GeneratedMnemonic) -> Self {
         Self {
-            phrase: value.phrase,
+            phrase: std::mem::take(&mut value.phrase),
             language: value.language.into(),
             word_count: value.word_count as u16,
         }
@@ -551,10 +562,10 @@ impl From<easydoge_km::GeneratedMnemonic> for GeneratedMnemonic {
 }
 
 impl From<easydoge_km::Xpriv> for Xpriv {
-    fn from(value: easydoge_km::Xpriv) -> Self {
+    fn from(mut value: easydoge_km::Xpriv) -> Self {
         Self {
             network: value.network.into(),
-            encoded: value.encoded,
+            encoded: std::mem::take(&mut value.encoded),
         }
     }
 }

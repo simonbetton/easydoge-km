@@ -53,6 +53,29 @@ Seven records can carry a seed phrase, extended private key, or WIF: `GeneratedM
 
 Swift and Kotlin obtain the text from the Rust library, so it uses Rust formatting on every platform, for example `Xpriv { network: Mainnet, encoded: "[redacted]" }`, and requires the native library to be loaded. Secrets passed or returned as bare strings (phrase and WIF arguments, `wif_from_xpriv`, `mnemonic_to_seed_hex`) are ordinary strings. Redaction is a safety net, not permission to log these values; see [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
+## Secret Memory Hygiene
+
+The Rust core wipes the secret memory it owns on a best-effort basis; [ADR 0008](adr/0008-secret-memory-hygiene.md) records the ownership model.
+
+- Wiped by the SDK: internal working copies (normalized seed phrases and passphrases, BIP39 seeds, decoded extended-key and WIF payloads, private keys, chain codes), and the secret fields of `Xpriv`, `GeneratedMnemonic`, and `UtxoSigner` when those records are dropped. Records that contain them (`AccountKeySet`, `ChangeDestination`, `SpendableUtxo`, `ComposeTransactionRequest`) are covered through their fields. The UniFFI layer wipes the Rust copies of `phrase`, `passphrase`, and `wif` arguments and of record arguments once the call returns.
+- Not wiped by the SDK: Swift, Kotlin, and JavaScript strings and objects; UniFFI's serialized argument and return buffers; values returned to the caller (seed hex, WIF, xpriv and mnemonic text); copies made by `Clone`, serde, moves, or reallocation; one-shot CLI arguments.
+
+Rust callers:
+
+- `Xpriv`, `GeneratedMnemonic`, and `UtxoSigner` implement `zeroize::Zeroize` and `zeroize::ZeroizeOnDrop`. Call `.zeroize()` to wipe one before it is dropped.
+- Because these records implement `Drop`, a field cannot be moved out of them, they cannot be destructured by value, and they cannot be the base of struct-update syntax. Take the field, clone it, or borrow it. Moving the whole record is unaffected.
+- Functions that return a bare secret string (`wif_from_xpriv`, `mnemonic_to_seed_hex`) hand ownership to the caller. Wrap the result in `zeroize::Zeroizing` if it should be wiped when dropped.
+
+```rust
+let mut account = easydoge_km::account_xpriv_from_mnemonic(phrase, None, language, network, 0)?;
+// A returned secret string belongs to the caller; wrap it to wipe it on drop.
+let wif = zeroize::Zeroizing::new(easydoge_km::wif_from_xpriv(&account.xpriv)?);
+// `let encoded = account.xpriv.encoded;` no longer compiles; take the field instead.
+let encoded = zeroize::Zeroizing::new(std::mem::take(&mut account.xpriv.encoded));
+```
+
+Swift, Kotlin, and Expo callers: the API is unchanged. Strings in those runtimes are immutable and managed by the runtime, so the SDK cannot wipe them; keep secrets in as few variables as possible and let them go out of scope promptly.
+
 ## Seed and Storage Limitations
 
 Mnemonic text and passphrases are NFKD-normalized before PBKDF2, as BIP39 requires, so canonically equivalent Unicode input derives the same wallet across every surface and matches other BIP39 implementations. Wallets derived before this normalization from a passphrase containing non-NFKD characters will not match; recover those with a pre-change build. ASCII and empty passphrases are unaffected.

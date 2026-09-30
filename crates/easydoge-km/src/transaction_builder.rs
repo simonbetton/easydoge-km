@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::encoding::{base58check_decode, hash160_bytes, wif};
 use crate::keys::{decode_xpriv, derive_path_from_xpriv, WifKey, Xpriv};
@@ -71,11 +72,13 @@ pub struct SpendableUtxo {
     pub manually_selected: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UtxoSigner {
+    #[zeroize(skip)]
     pub kind: UtxoSignerKind,
     pub wif: Option<String>,
     pub xpriv: Option<Xpriv>,
+    #[zeroize(skip)]
     pub derivation_path: Option<String>,
 }
 
@@ -246,7 +249,7 @@ struct ResolvedSigner {
     public_key_bytes: Vec<u8>,
     public_key_hex: String,
     compressed: bool,
-    wif: String,
+    wif: Zeroizing<String>,
 }
 
 pub fn compose_and_sign_transaction(
@@ -797,9 +800,9 @@ fn resolve_valid_signers(network: Network, utxo: &SpendableUtxo) -> Result<Vec<R
 
 fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigner> {
     let wif_value = match signer.kind {
-        UtxoSignerKind::Wif => signer.wif.clone().ok_or_else(|| {
+        UtxoSignerKind::Wif => Zeroizing::new(signer.wif.clone().ok_or_else(|| {
             Error::InvalidKey("WIF signer requires redacted WIF field".to_owned())
-        })?,
+        })?),
         UtxoSignerKind::XprivDerivation => {
             let xpriv = signer.xpriv.as_ref().ok_or_else(|| {
                 Error::InvalidKey("xpriv derivation signer requires xpriv".to_owned())
@@ -816,7 +819,8 @@ fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigne
             })?;
             let child = derive_path_from_xpriv(xpriv, path)?;
             let child_key = decode_xpriv(network, &child.encoded)?;
-            wif(network, &child_key.private_key.secret_bytes(), true)
+            let secret_bytes = Zeroizing::new(child_key.private_key.secret_bytes());
+            Zeroizing::new(wif(network, &secret_bytes, true))
         }
     };
     let key = WifKey::parse(&wif_value, network)?;

@@ -1,5 +1,6 @@
 use bitcoin::hashes::{hash160, Hash};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::{limits, Error, Network, Result};
 
@@ -8,10 +9,10 @@ pub(crate) fn hash160_bytes(bytes: &[u8]) -> [u8; 20] {
 }
 
 pub(crate) fn base58check_encode(prefix: u8, payload: &[u8]) -> String {
-    let mut data = Vec::with_capacity(payload.len() + 1);
+    let mut data = Zeroizing::new(Vec::with_capacity(payload.len() + 1));
     data.push(prefix);
     data.extend_from_slice(payload);
-    bs58::encode(data).with_check().into_string()
+    bs58::encode(data.as_slice()).with_check().into_string()
 }
 
 pub(crate) fn base58check_decode(value: &str) -> Result<Vec<u8>> {
@@ -42,7 +43,7 @@ pub(crate) fn p2sh_address(network: Network, redeem_script: &[u8]) -> String {
 }
 
 pub(crate) fn wif(network: Network, private_key: &[u8; 32], compressed: bool) -> String {
-    let mut payload = Vec::with_capacity(if compressed { 33 } else { 32 });
+    let mut payload = Zeroizing::new(Vec::with_capacity(if compressed { 33 } else { 32 }));
     payload.extend_from_slice(private_key);
     if compressed {
         payload.push(0x01);

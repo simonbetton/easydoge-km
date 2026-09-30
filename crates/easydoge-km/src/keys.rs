@@ -2,10 +2,11 @@ use bip39::{Language as Bip39Language, Mnemonic};
 use bitcoin::bip32::{DerivationPath, Xpriv as BtcXpriv, Xpub as BtcXpub};
 use bitcoin::secp256k1::{All, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::fmt;
+use std::ops::Deref;
 use std::str::FromStr;
 use unicode_normalization::UnicodeNormalization;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::encoding::{base58check_decode, p2pkh_address, wif};
 use crate::{Error, Network, Result};
@@ -31,10 +32,12 @@ pub struct MnemonicOptions {
     pub word_count: usize,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct GeneratedMnemonic {
     pub phrase: String,
+    #[zeroize(skip)]
     pub language: Language,
+    #[zeroize(skip)]
     pub word_count: usize,
 }
 
@@ -87,8 +90,9 @@ pub struct WifInfo {
     pub compressed: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Xpriv {
+    #[zeroize(skip)]
     pub network: Network,
     pub encoded: String,
 }
@@ -186,7 +190,7 @@ pub fn generate_mnemonic(options: MnemonicOptions) -> Result<GeneratedMnemonic> 
     let mnemonic = Mnemonic::generate_in(options.language.to_bip39(), options.word_count)
         .map_err(|err| Error::Crypto(err.to_string()))?;
     Ok(GeneratedMnemonic {
-        phrase: mnemonic.to_string(),
+        phrase: mnemonic_phrase(&mnemonic),
         language: options.language,
         word_count: options.word_count,
     })
@@ -194,7 +198,7 @@ pub fn generate_mnemonic(options: MnemonicOptions) -> Result<GeneratedMnemonic> 
 
 pub fn validate_mnemonic(phrase: &str, language: Language) -> Result<bool> {
     let normalized = normalize(phrase);
-    Ok(Mnemonic::parse_in(language.to_bip39(), normalized.as_str()).is_ok())
+    Ok(Mnemonic::parse_in_normalized(language.to_bip39(), normalized.as_str()).is_ok())
 }
 
 pub fn mnemonic_to_seed_hex(
@@ -203,8 +207,9 @@ pub fn mnemonic_to_seed_hex(
     language: Language,
 ) -> Result<String> {
     let mnemonic = parse_mnemonic(phrase, language)?;
-    let seed = mnemonic.to_seed_normalized(&normalize(passphrase.unwrap_or_default()));
-    Ok(hex::encode(seed))
+    let passphrase = normalize(passphrase.unwrap_or_default());
+    let seed = Zeroizing::new(mnemonic.to_seed_normalized(&passphrase));
+    Ok(hex::encode(seed.as_slice()))
 }
 
 pub fn account_xpriv_from_mnemonic(
@@ -215,16 +220,21 @@ pub fn account_xpriv_from_mnemonic(
     account: u32,
 ) -> Result<AccountKeySet> {
     let mnemonic = parse_mnemonic(phrase, language)?;
-    let seed = mnemonic.to_seed_normalized(&normalize(passphrase.unwrap_or_default()));
+    let passphrase = normalize(passphrase.unwrap_or_default());
+    let seed = Zeroizing::new(mnemonic.to_seed_normalized(&passphrase));
     let secp = Secp256k1::new();
-    let master = BtcXpriv::new_master(network.bip32_kind(), &seed)
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+    let master = ErasingXpriv::new(
+        BtcXpriv::new_master(network.bip32_kind(), seed.as_slice())
+            .map_err(|err| Error::Crypto(err.to_string()))?,
+    );
     let account_path = format!("m/44'/3'/{}'", account);
     let path = DerivationPath::from_str(&account_path)
         .map_err(|err| Error::InvalidDerivationPath(err.to_string()))?;
-    let account_key = master
-        .derive_priv(&secp, &path)
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+    let account_key = ErasingXpriv::new(
+        master
+            .derive_priv(&secp, &path)
+            .map_err(|err| Error::Crypto(err.to_string()))?,
+    );
     let account_xpub = BtcXpub::from_priv(&secp, &account_key);
     Ok(AccountKeySet {
         network,
@@ -245,9 +255,10 @@ pub fn derive_path_from_xpriv(xpriv: &Xpriv, path: &str) -> Result<Xpriv> {
     let key = decode_xpriv(xpriv.network, &xpriv.encoded)?;
     let secp = Secp256k1::new();
     let path = parse_path(path)?;
-    let child = key
-        .derive_priv(&secp, &path)
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+    let child = ErasingXpriv::new(
+        key.derive_priv(&secp, &path)
+            .map_err(|err| Error::Crypto(err.to_string()))?,
+    );
     Ok(Xpriv {
         network: xpriv.network,
         encoded: encode_xpriv(xpriv.network, &child),
@@ -306,7 +317,8 @@ pub fn derive_address_from_xpub(xpub: &Xpub, path: &str) -> Result<PathAddress> 
 
 pub fn wif_from_xpriv(xpriv: &Xpriv) -> Result<String> {
     let key = decode_xpriv(xpriv.network, &xpriv.encoded)?;
-    Ok(wif(xpriv.network, &key.private_key.secret_bytes(), true))
+    let secret_bytes = Zeroizing::new(key.private_key.secret_bytes());
+    Ok(wif(xpriv.network, &secret_bytes, true))
 }
 
 pub fn address_from_wif(network: Network, wif_value: &str) -> Result<WifInfo> {
@@ -394,12 +406,33 @@ pub fn inspect_xpub(xpub: &Xpub) -> Result<ExtendedKeyInfo> {
 
 pub(crate) fn parse_mnemonic(phrase: &str, language: Language) -> Result<Mnemonic> {
     let normalized = normalize(phrase);
-    Mnemonic::parse_in(language.to_bip39(), normalized.as_str())
+    Mnemonic::parse_in_normalized(language.to_bip39(), normalized.as_str())
         .map_err(|err| Error::InvalidKey(err.to_string()))
 }
 
-pub(crate) fn normalize(value: &str) -> String {
-    value.nfkd().collect::<Cow<'_, str>>().to_string()
+/// NFKD-normalizes a Seed Phrase or passphrase into a buffer that is wiped
+/// when dropped. The buffer is sized before it is filled, so it never
+/// reallocates and leaves no partial copy of the secret on the heap.
+pub(crate) fn normalize(value: &str) -> Zeroizing<String> {
+    let len = value.nfkd().map(char::len_utf8).sum();
+    let mut normalized = Zeroizing::new(String::with_capacity(len));
+    normalized.extend(value.nfkd());
+    normalized
+}
+
+/// Renders the Seed Phrase as space-separated words into a buffer sized
+/// before it is filled, so no partial copy of the phrase is left behind by a
+/// reallocation. The caller owns the returned text.
+fn mnemonic_phrase(mnemonic: &Mnemonic) -> String {
+    let len = mnemonic.words().map(|word| word.len() + 1).sum::<usize>();
+    let mut phrase = String::with_capacity(len);
+    for word in mnemonic.words() {
+        if !phrase.is_empty() {
+            phrase.push(' ');
+        }
+        phrase.push_str(word);
+    }
+    phrase
 }
 
 pub(crate) fn parse_path(path: &str) -> Result<DerivationPath> {
@@ -413,9 +446,9 @@ fn path_contains_hardened(path: &str) -> bool {
 }
 
 pub(crate) fn encode_xpriv(network: Network, xpriv: &BtcXpriv) -> String {
-    let mut data = xpriv.encode();
+    let mut data = Zeroizing::new(xpriv.encode());
     data[0..4].copy_from_slice(&network.prefixes().xpriv);
-    bs58::encode(data).with_check().into_string()
+    bs58::encode(data.as_slice()).with_check().into_string()
 }
 
 pub(crate) fn encode_xpub(network: Network, xpub: &BtcXpub) -> String {
@@ -424,7 +457,35 @@ pub(crate) fn encode_xpub(network: Network, xpub: &BtcXpub) -> String {
     bs58::encode(data).with_check().into_string()
 }
 
-pub(crate) fn decode_xpriv(network: Network, encoded: &str) -> Result<BtcXpriv> {
+/// A decoded Extended Private Key that erases its private key and chain code
+/// when dropped. `bitcoin::bip32::Xpriv` is `Copy` and has no destructor, so
+/// every decoded or derived key is held in this wrapper. Borrow through it;
+/// never copy the inner value out with `*`.
+pub(crate) struct ErasingXpriv(BtcXpriv);
+
+impl ErasingXpriv {
+    pub(crate) fn new(key: BtcXpriv) -> Self {
+        Self(key)
+    }
+}
+
+impl Deref for ErasingXpriv {
+    type Target = BtcXpriv;
+
+    fn deref(&self) -> &BtcXpriv {
+        &self.0
+    }
+}
+
+impl Drop for ErasingXpriv {
+    fn drop(&mut self) {
+        self.0.private_key.non_secure_erase();
+        let chain_code: &mut [u8] = self.0.chain_code.as_mut();
+        chain_code.zeroize();
+    }
+}
+
+pub(crate) fn decode_xpriv(network: Network, encoded: &str) -> Result<ErasingXpriv> {
     let mut data = decode_extended_key_bytes(encoded)?;
     let prefixes = network.prefixes();
     if data[0..4] == prefixes.xpriv {
@@ -432,13 +493,17 @@ pub(crate) fn decode_xpriv(network: Network, encoded: &str) -> Result<BtcXpriv> 
             Network::Mainnet => &[0x04, 0x88, 0xad, 0xe4],
             Network::Testnet | Network::Regtest => &[0x04, 0x35, 0x83, 0x94],
         });
-        BtcXpriv::decode(&data).map_err(|err| Error::InvalidKey(err.to_string()))
+        BtcXpriv::decode(&data)
+            .map(ErasingXpriv::new)
+            .map_err(|err| Error::InvalidKey(err.to_string()))
     } else if is_legacy_xpriv(&data[0..4]) {
         data[0..4].copy_from_slice(match network {
             Network::Mainnet => &[0x04, 0x88, 0xad, 0xe4],
             Network::Testnet | Network::Regtest => &[0x04, 0x35, 0x83, 0x94],
         });
-        BtcXpriv::decode(&data).map_err(|err| Error::InvalidKey(err.to_string()))
+        BtcXpriv::decode(&data)
+            .map(ErasingXpriv::new)
+            .map_err(|err| Error::InvalidKey(err.to_string()))
     } else {
         Err(Error::InvalidKey(
             "extended private key prefix does not match network".to_owned(),
@@ -468,8 +533,8 @@ pub(crate) fn decode_xpub(network: Network, encoded: &str) -> Result<BtcXpub> {
     }
 }
 
-fn decode_extended_key_bytes(encoded: &str) -> Result<Vec<u8>> {
-    let data = base58check_decode(encoded)?;
+fn decode_extended_key_bytes(encoded: &str) -> Result<Zeroizing<Vec<u8>>> {
+    let data = Zeroizing::new(base58check_decode(encoded)?);
     if data.len() != 78 {
         return Err(Error::InvalidKey(format!(
             "extended key payload must be 78 bytes, got {}",
@@ -497,7 +562,7 @@ pub(crate) struct WifKey {
 
 impl WifKey {
     pub(crate) fn parse(value: &str, network: Network) -> Result<Self> {
-        let data = base58check_decode(value)?;
+        let data = Zeroizing::new(base58check_decode(value)?);
         if data.first().copied() != Some(network.prefixes().wif) {
             return Err(Error::InvalidKey(
                 "WIF prefix does not match network".to_owned(),
@@ -523,6 +588,12 @@ impl WifKey {
             &PublicKey::from_secret_key(secp, &self.secret_key),
             self.compressed,
         )
+    }
+}
+
+impl Drop for WifKey {
+    fn drop(&mut self) {
+        self.secret_key.non_secure_erase();
     }
 }
 

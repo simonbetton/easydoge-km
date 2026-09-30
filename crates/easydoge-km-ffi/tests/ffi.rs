@@ -1,8 +1,9 @@
 use easydoge_km_ffi::{
     account_xpriv_from_mnemonic, combine_signing_envelopes, compose_and_sign_transaction,
-    derive_address_from_xpub, finalize_signing_envelope, sign_message, sign_p2pkh_transaction,
-    sign_signing_envelope, ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest,
-    FeePolicy, GeneratedMnemonic, Language, Network, SigningEnvelope, SigningEnvelopeInput,
+    derive_address_from_xpub, derive_path_from_xpriv, finalize_signing_envelope, generate_mnemonic,
+    sign_message, sign_p2pkh_transaction, sign_signing_envelope, validate_mnemonic,
+    ChangeDestination, CoinSelectionStrategy, ComposeTransactionRequest, FeePolicy,
+    GeneratedMnemonic, Language, MnemonicOptions, Network, SigningEnvelope, SigningEnvelopeInput,
     SigningInputKind, SpendableUtxo, TransactionOptions, TransactionOutput, TransactionOutputKind,
     UtxoSigner, UtxoSignerKind, Xpriv,
 };
@@ -286,4 +287,43 @@ fn ffi_surface_reports_core_resource_limits() {
             .contains("which exceeds the limit of 199998 (99999 bytes)"),
         "{error}"
     );
+}
+
+#[test]
+fn ffi_secret_records_cross_the_boundary_with_their_values_intact() {
+    // The core records wipe themselves when dropped, so the FFI conversions
+    // must take the secret text out of them before that happens.
+    let vectors = vectors();
+    let phrase = vectors["mnemonic"]["phrase"].as_str().unwrap();
+    let xpriv_text = vectors["mnemonic"]["account"]["xpriv"].as_str().unwrap();
+
+    let generated = generate_mnemonic(MnemonicOptions {
+        language: Language::English,
+        word_count: 12,
+    })
+    .unwrap();
+    assert_eq!(generated.phrase.split(' ').count(), 12);
+    assert!(validate_mnemonic(generated.phrase.clone(), Language::English).unwrap());
+
+    let keys = account_xpriv_from_mnemonic(
+        phrase.to_owned(),
+        Some("TREZOR".to_owned()),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap();
+    assert_eq!(keys.xpriv.encoded, xpriv_text);
+
+    let child = derive_path_from_xpriv(keys.xpriv.clone(), "m/0/0".to_owned()).unwrap();
+    let expected = easydoge_km::derive_path_from_xpriv(
+        &easydoge_km::Xpriv {
+            network: easydoge_km::Network::Mainnet,
+            encoded: xpriv_text.to_owned(),
+        },
+        "m/0/0",
+    )
+    .unwrap();
+    assert!(!child.encoded.is_empty());
+    assert_eq!(child.encoded, expected.encoded);
 }

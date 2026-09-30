@@ -3603,3 +3603,146 @@ fn compose_builder_sizes_thousands_of_outputs_once() {
     assert_eq!(envelope.inputs.len(), 300);
     assert!(envelope.signatures.is_empty());
 }
+
+// --- Secret memory hygiene (ADR 0008) -----------------------------------------
+//
+// Wiping on drop cannot be observed by a safe test: reading memory after it
+// is freed is undefined behavior. These tests pin what is observable: the
+// secret-bearing records implement `ZeroizeOnDrop`, an explicit `zeroize()`
+// empties exactly the secret fields, and cloning, comparing, serializing and
+// signing keep working.
+
+/// Compiles only when `T` wipes its secret fields when dropped.
+fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+
+fn parity_account_xpriv() -> easydoge_km::Xpriv {
+    account_xpriv_from_mnemonic(
+        PHRASE,
+        Some("TREZOR"),
+        Language::English,
+        Network::Mainnet,
+        0,
+    )
+    .unwrap()
+    .xpriv
+}
+
+#[test]
+fn secret_bearing_records_wipe_their_secrets_when_dropped() {
+    assert_zeroize_on_drop::<easydoge_km::Xpriv>();
+    assert_zeroize_on_drop::<GeneratedMnemonic>();
+    assert_zeroize_on_drop::<UtxoSigner>();
+}
+
+#[test]
+fn zeroizing_an_extended_private_key_empties_the_encoded_key() {
+    use zeroize::Zeroize;
+    let mut xpriv = parity_account_xpriv();
+    assert!(!xpriv.encoded.is_empty());
+    xpriv.zeroize();
+    assert!(xpriv.encoded.is_empty());
+    assert_eq!(xpriv.network, Network::Mainnet);
+}
+
+#[test]
+fn zeroizing_a_generated_mnemonic_empties_the_seed_phrase() {
+    use zeroize::Zeroize;
+    let mut generated = GeneratedMnemonic {
+        phrase: PHRASE.to_owned(),
+        language: Language::English,
+        word_count: 12,
+    };
+    generated.zeroize();
+    assert!(generated.phrase.is_empty());
+    assert_eq!(generated.language, Language::English);
+    assert_eq!(generated.word_count, 12);
+}
+
+#[test]
+fn zeroizing_a_utxo_signer_clears_the_wif_and_the_extended_private_key() {
+    use zeroize::Zeroize;
+    let mut signer = UtxoSigner {
+        kind: UtxoSignerKind::Wif,
+        wif: Some(parity_wif()),
+        xpriv: Some(parity_account_xpriv()),
+        derivation_path: Some("m/0/0".to_owned()),
+    };
+    signer.zeroize();
+    assert_eq!(signer.wif, None);
+    assert_eq!(signer.xpriv, None);
+    assert_eq!(signer.kind, UtxoSignerKind::Wif);
+    assert_eq!(signer.derivation_path.as_deref(), Some("m/0/0"));
+}
+
+#[test]
+fn secret_bearing_records_still_clone_compare_and_round_trip_through_serde() {
+    let xpriv = parity_account_xpriv();
+    let mut request = compose_request_base(
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        150_000_000,
+    );
+    request.utxos[0].signers.push(UtxoSigner {
+        kind: UtxoSignerKind::XprivDerivation,
+        wif: None,
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/0/0".to_owned()),
+    });
+    request.change = Some(ChangeDestination {
+        address: None,
+        xpriv: Some(xpriv.clone()),
+        derivation_path: Some("m/1/0".to_owned()),
+    });
+
+    let cloned = request.clone();
+    assert!(cloned == request, "a clone must equal its source");
+    let json = serde_json::to_string(&request).unwrap();
+    let restored: ComposeTransactionRequest = serde_json::from_str(&json).unwrap();
+    assert!(restored == request, "serde must round-trip the request");
+    assert_eq!(
+        restored.utxos[0].signers[1].xpriv.as_ref().unwrap().encoded,
+        xpriv.encoded
+    );
+    assert_eq!(restored.utxos[0].signers[0].wif, Some(parity_wif()));
+}
+
+#[test]
+fn dropping_a_copy_of_a_request_does_not_disturb_the_original() {
+    let request = compose_request_base(
+        "6666666666666666666666666666666666666666666666666666666666666666",
+        150_000_000,
+    );
+    let first = compose_and_sign_transaction(&request).unwrap();
+    drop(request.clone());
+    let second = compose_and_sign_transaction(&request).unwrap();
+    assert!(first.signed_tx_hex.is_some());
+    assert_eq!(first.signed_tx_hex, second.signed_tx_hex);
+    assert_eq!(request.utxos[0].signers[0].wif, Some(parity_wif()));
+}
+
+#[test]
+fn generated_seed_phrases_are_single_spaced_and_validate_in_every_language() {
+    for language in [
+        Language::English,
+        Language::SimplifiedChinese,
+        Language::TraditionalChinese,
+        Language::Czech,
+        Language::French,
+        Language::Italian,
+        Language::Japanese,
+        Language::Korean,
+        Language::Portuguese,
+        Language::Spanish,
+    ] {
+        for word_count in [12, 15, 18, 21, 24] {
+            let generated = generate_mnemonic(MnemonicOptions {
+                language,
+                word_count,
+            })
+            .unwrap();
+            assert_eq!(generated.word_count, word_count);
+            assert_eq!(generated.phrase.split(' ').count(), word_count);
+            assert!(!generated.phrase.starts_with(' ') && !generated.phrase.ends_with(' '));
+            assert!(validate_mnemonic(&generated.phrase, language).unwrap());
+        }
+    }
+}

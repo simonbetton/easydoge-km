@@ -8,6 +8,7 @@
 use anyhow::{anyhow, bail, Result};
 use std::fs::File;
 use std::io::{self, Read};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Upper bound on a secret read from a file or standard input.
 pub(crate) const MAX_SECRET_BYTES: u64 = 64 * 1024;
@@ -77,8 +78,13 @@ impl SecretInput {
             File::open(path).and_then(|file| read_bounded(file, MAX_SECRET_BYTES))
         }
         .map_err(|error| anyhow!("cannot read {source}: {error}"))?;
-        // The UTF-8 error is dropped on purpose: it owns the bytes that were read.
-        let text = String::from_utf8(bytes).map_err(|_| anyhow!("{source} is not valid UTF-8"))?;
+        // The file contents are wiped when this function returns; only the
+        // returned copy, without its line ending, stays with the caller.
+        let text = Zeroizing::new(String::from_utf8(bytes).map_err(|error| {
+            // The error owns the bytes that were read: wipe them, never print them.
+            error.into_bytes().zeroize();
+            anyhow!("{source} is not valid UTF-8")
+        })?);
         let secret = strip_one_line_ending(&text);
         if secret.is_empty() {
             bail!("{source} is empty");
