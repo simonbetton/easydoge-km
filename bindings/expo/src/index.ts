@@ -1,4 +1,15 @@
+/**
+ * Validated by the native modules at runtime: any other string, including a
+ * different letter case, rejects the call with
+ * `Invalid <field>: expected one of ...` instead of falling back to a default.
+ */
 export type Network = "mainnet" | "testnet" | "regtest";
+
+/**
+ * BIP39 wordlist language. Validated by the native modules at runtime like
+ * `Network`. Where a signature marks `language` optional, omitting it (or
+ * passing `null`) selects `"english"`.
+ */
 export type Language =
   | "english"
   | "simplified-chinese"
@@ -250,6 +261,10 @@ export interface StoredWalletHandle {
   id: string;
 }
 
+/**
+ * Validated by the native modules at runtime like `Network`: an unknown value
+ * rejects the call and never falls back to `"no-prompt"`.
+ */
 export type StoredWalletProtection = "no-prompt" | "device-credential" | "biometric";
 export type StorageProtectionLevel = "hardware-backed" | "os-backed" | "unsupported";
 

@@ -48,7 +48,7 @@ The Rust core does not provide durable secret storage. Platform packages provide
 - Kotlin encrypts mnemonic text with AES-GCM and a key in Android Keystore. Apps use `AndroidKeystoreWalletSecretStore.persistent(context)`, which writes the ciphertext and IV to app-private, no-backup storage (`Context.noBackupFilesDir`) so Stored Wallet Handles survive process death. Keystore keys never leave the device, so records are intentionally excluded from Auto Backup. `inMemory()` is for tests and demos and does not survive process death.
 - Android requests StrongBox on API 28+ and falls back to standard Keystore. `hardware-backed` reports successful StrongBox key creation; `os-backed` is the fallback label, not proof that a device has no other hardware-backed Keystore.
 - Both Android prompt modes currently request the same authentication policy. The adapter does not launch or connect a `BiometricPrompt` flow to its cipher operations. Authenticated storage/export must be verified and integrated on device; selecting a protection enum alone does not provide that UI.
-- Expo calls these adapters directly in its native modules. The Android module uses the persistent store. Unrecognized protection strings fall back to `no-prompt`; TypeScript types alone do not enforce runtime values.
+- Expo calls these adapters directly in its native modules. The Android module uses the persistent store. The native modules accept only the exact strings `no-prompt`, `device-credential`, and `biometric` for `protection`; anything else rejects the call instead of falling back to `no-prompt`. `network` and `language` strings are validated the same way.
 
 The adapters store the mnemonic only, not its optional BIP39 passphrase. Applications must retain the handle and arrange recovery of both mnemonic and passphrase. Passing a different protection mode to export does not rewrite the access controls selected at storage time.
 
@@ -56,7 +56,7 @@ Applications remain responsible for backup UX, user authentication policy, devic
 
 ## Verification Limits
 
-The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrapper tests, Kotlin JVM wrapper tests, and numeric codec tests. Expo receives a TypeScript check against a local declaration. The suite does not compile the Expo native modules, test device Keychain/Keystore authentication or process-death recovery, or build mobile release artifacts. Passing it is not evidence of an independent security audit or production readiness.
+The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrapper tests, Kotlin JVM wrapper tests, and numeric and enum codec tests. Expo receives a TypeScript check against a local declaration. The suite does not compile the Expo native modules, test device Keychain/Keystore authentication or process-death recovery, or build mobile release artifacts. Passing it is not evidence of an independent security audit or production readiness.
 
 ## Operational Requirements
 

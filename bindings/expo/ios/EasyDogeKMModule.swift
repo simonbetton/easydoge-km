@@ -10,26 +10,26 @@ public class EasyDogeKMModule: Module {
 
         AsyncFunction("generateMnemonic") { (options: [String: Any]?) in
             let opts = MnemonicOptions(
-                language: parseLanguage(options?["language"] as? String),
+                language: try WireEnumCodec.language(options?["language"], field: "language"),
                 wordCount: try WireCodec.uint16(options?["wordCount"] ?? 24, field: "wordCount")
             )
             return try sdk.generateMnemonic(options: opts).asDictionary()
         }
 
         AsyncFunction("validateMnemonic") { (phrase: String, language: String?) in
-            try validateMnemonic(phrase: phrase, language: parseLanguage(language))
+            try validateMnemonic(phrase: phrase, language: try WireEnumCodec.language(language, field: "language"))
         }
 
         AsyncFunction("mnemonicToSeedHex") { (phrase: String, passphrase: String?, language: String?) in
-            try mnemonicToSeedHex(phrase: phrase, passphrase: passphrase, language: parseLanguage(language))
+            try mnemonicToSeedHex(phrase: phrase, passphrase: passphrase, language: try WireEnumCodec.language(language, field: "language"))
         }
 
         AsyncFunction("accountKeysFromMnemonic") { (phrase: String, passphrase: String?, language: String, network: String, account: Double) in
             try sdk.accountKeys(
                 phrase: phrase,
                 passphrase: passphrase,
-                language: parseLanguage(language),
-                network: parseNetwork(network),
+                language: try WireEnumCodec.language(language, field: "language"),
+                network: try WireEnumCodec.network(network, field: "network"),
                 account: try WireCodec.uint32(account, field: "account")
             ).asDictionary()
         }
@@ -59,11 +59,11 @@ public class EasyDogeKMModule: Module {
         }
 
         AsyncFunction("addressFromWif") { (network: String, wif: String) in
-            try addressFromWif(network: parseNetwork(network), wif: wif).asDictionary()
+            try addressFromWif(network: try WireEnumCodec.network(network, field: "network"), wif: wif).asDictionary()
         }
 
         AsyncFunction("validateAddress") { (network: String, address: String) in
-            try validateAddress(network: parseNetwork(network), address: address)
+            try validateAddress(network: try WireEnumCodec.network(network, field: "network"), address: address)
         }
 
         AsyncFunction("inspectXpriv") { (xpriv: [String: String]) in
@@ -76,21 +76,21 @@ public class EasyDogeKMModule: Module {
 
         AsyncFunction("createMultisigDescriptor") { (network: String, threshold: Double, cosignerXpubs: [[String: String]], childPath: String, sorted: Bool) in
             try sdk.createMultisigDescriptor(
-                network: parseNetwork(network),
+                network: try WireEnumCodec.network(network, field: "network"),
                 threshold: try WireCodec.uint8(threshold, field: "threshold"),
-                cosignerXpubs: cosignerXpubs.map { Xpub.fromDictionary($0) },
+                cosignerXpubs: try cosignerXpubs.map { try Xpub.fromDictionary($0) },
                 childPath: childPath,
                 sorted: sorted
             ).asDictionary()
         }
 
         AsyncFunction("signMessage") { (network: String, wif: String, message: String) in
-            try sdk.signMessage(network: parseNetwork(network), wif: wif, message: message).asDictionary()
+            try sdk.signMessage(network: try WireEnumCodec.network(network, field: "network"), wif: wif, message: message).asDictionary()
         }
 
         AsyncFunction("verifyMessage") { (network: String, address: String, signatureBase64: String, message: String) in
             try sdk.verifyMessage(
-                network: parseNetwork(network),
+                network: try WireEnumCodec.network(network, field: "network"),
                 address: address,
                 signatureBase64: signatureBase64,
                 message: message
@@ -99,7 +99,7 @@ public class EasyDogeKMModule: Module {
 
         AsyncFunction("signP2pkhTransaction") { (network: String, unsignedTxHex: String, inputIndex: Double, scriptPubkeyHex: String, wif: String, sighashType: Double) in
             try sdk.signP2pkhTransaction(
-                network: parseNetwork(network),
+                network: try WireEnumCodec.network(network, field: "network"),
                 unsignedTxHex: unsignedTxHex,
                 inputIndex: try WireCodec.uint64(inputIndex, field: "inputIndex"),
                 scriptPubkeyHex: scriptPubkeyHex,
@@ -129,13 +129,13 @@ public class EasyDogeKMModule: Module {
         }
 
         AsyncFunction("storeMnemonic") { (phrase: String, protection: String) async throws in
-            try await store.storeMnemonic(phrase, protection: parseProtection(protection)).asDictionary()
+            try await store.storeMnemonic(phrase, protection: try WireEnumCodec.protection(protection, field: "protection")).asDictionary()
         }
 
         AsyncFunction("exportMnemonic") { (handle: [String: String], protection: String) async throws in
             try await store.exportMnemonic(
                 handle: StoredWalletHandle(id: handle["id"] ?? ""),
-                protection: parseProtection(protection)
+                protection: try WireEnumCodec.protection(protection, field: "protection")
             )
         }
 
@@ -162,37 +162,6 @@ private enum EasyDogeKMExpoError: LocalizedError {
         case let .invalidCoinSelectionStrategy(value):
             return "Invalid coin selection strategy: \(value)"
         }
-    }
-}
-
-private func parseNetwork(_ value: String?) -> Network {
-    switch value {
-    case "testnet": return .testnet
-    case "regtest": return .regtest
-    default: return .mainnet
-    }
-}
-
-private func parseLanguage(_ value: String?) -> Language {
-    switch value {
-    case "simplified-chinese": return .simplifiedChinese
-    case "traditional-chinese": return .traditionalChinese
-    case "czech": return .czech
-    case "french": return .french
-    case "italian": return .italian
-    case "japanese": return .japanese
-    case "korean": return .korean
-    case "portuguese": return .portuguese
-    case "spanish": return .spanish
-    default: return .english
-    }
-}
-
-private func parseProtection(_ value: String) -> StoredWalletProtection {
-    switch value {
-    case "device-credential": return .deviceCredential
-    case "biometric": return .biometric
-    default: return .noPrompt
     }
 }
 
@@ -242,12 +211,12 @@ private extension PathAddress {
 }
 
 private extension Xpriv {
-    static func fromDictionary(_ value: [String: String]) -> Xpriv {
-        Xpriv(network: parseNetwork(value["network"]), encoded: value["encoded"] ?? "")
+    static func fromDictionary(_ value: [String: String]) throws -> Xpriv {
+        Xpriv(network: try WireEnumCodec.network(value["network"], field: "network"), encoded: value["encoded"] ?? "")
     }
 
-    static func fromDictionary(_ value: [String: Any]) -> Xpriv {
-        Xpriv(network: parseNetwork(value["network"] as? String), encoded: value["encoded"] as? String ?? "")
+    static func fromDictionary(_ value: [String: Any]) throws -> Xpriv {
+        Xpriv(network: try WireEnumCodec.network(value["network"], field: "network"), encoded: value["encoded"] as? String ?? "")
     }
 
     func asDictionary() -> [String: String] {
@@ -256,12 +225,12 @@ private extension Xpriv {
 }
 
 private extension Xpub {
-    static func fromDictionary(_ value: [String: String]) -> Xpub {
-        Xpub(network: parseNetwork(value["network"]), encoded: value["encoded"] ?? "")
+    static func fromDictionary(_ value: [String: String]) throws -> Xpub {
+        Xpub(network: try WireEnumCodec.network(value["network"], field: "network"), encoded: value["encoded"] ?? "")
     }
 
-    static func fromDictionary(_ value: [String: Any]) -> Xpub {
-        Xpub(network: parseNetwork(value["network"] as? String), encoded: value["encoded"] as? String ?? "")
+    static func fromDictionary(_ value: [String: Any]) throws -> Xpub {
+        Xpub(network: try WireEnumCodec.network(value["network"], field: "network"), encoded: value["encoded"] as? String ?? "")
     }
 
     func asDictionary() -> [String: String] {
@@ -332,7 +301,7 @@ private extension SigningEnvelope {
     static func fromDictionary(_ value: [String: Any]) throws -> SigningEnvelope {
         SigningEnvelope(
             version: try WireCodec.uint8(value["version"] ?? 1, field: "version"),
-            network: parseNetwork(value["network"] as? String),
+            network: try WireEnumCodec.network(value["network"], field: "network"),
             unsignedTxHex: value["unsignedTxHex"] as? String ?? "",
             inputs: try (value["inputs"] as? [[String: Any]] ?? []).map { try SigningEnvelopeInput.fromDictionary($0) },
             signatures: try (value["signatures"] as? [[String: Any]] ?? []).map { try SigningEnvelopeSignature.fromDictionary($0) }
@@ -450,12 +419,12 @@ private extension CoinSelectionStrategy {
 private extension ComposeTransactionRequest {
     static func fromDictionary(_ value: [String: Any]) throws -> ComposeTransactionRequest {
         ComposeTransactionRequest(
-            network: parseNetwork(value["network"] as? String),
+            network: try WireEnumCodec.network(value["network"], field: "network"),
             utxos: try dictionaries(value["utxos"]).map { try SpendableUtxo.fromDictionary($0) },
             outputs: try dictionaries(value["outputs"]).map { try TransactionOutput.fromDictionary($0) },
             feePolicy: try FeePolicy.fromDictionary(dictionary(value["feePolicy"])),
             coinSelection: try CoinSelectionStrategy.fromRawString(value["coinSelection"] as? String),
-            change: (value["change"] as? [String: Any]).map { ChangeDestination.fromDictionary($0) },
+            change: try (value["change"] as? [String: Any]).map { try ChangeDestination.fromDictionary($0) },
             options: try TransactionOptions.fromDictionary(dictionary(value["options"]))
         )
     }
@@ -483,7 +452,7 @@ private extension UtxoSigner {
         UtxoSigner(
             kind: try UtxoSignerKind.fromRawString(value["kind"] as? String),
             wif: value["wif"] as? String,
-            xpriv: (value["xpriv"] as? [String: Any]).map { Xpriv.fromDictionary($0) },
+            xpriv: try (value["xpriv"] as? [String: Any]).map { try Xpriv.fromDictionary($0) },
             derivationPath: value["derivationPath"] as? String
         )
     }
@@ -511,10 +480,10 @@ private extension FeePolicy {
 }
 
 private extension ChangeDestination {
-    static func fromDictionary(_ value: [String: Any]) -> ChangeDestination {
+    static func fromDictionary(_ value: [String: Any]) throws -> ChangeDestination {
         ChangeDestination(
             address: value["address"] as? String,
-            xpriv: (value["xpriv"] as? [String: Any]).map { Xpriv.fromDictionary($0) },
+            xpriv: try (value["xpriv"] as? [String: Any]).map { try Xpriv.fromDictionary($0) },
             derivationPath: value["derivationPath"] as? String
         )
     }

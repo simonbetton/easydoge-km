@@ -5,8 +5,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import io.easydoge.km.AndroidKeystoreWalletSecretStore
 import io.easydoge.km.EasyDogeKM
 import io.easydoge.km.StoredWalletHandle
-import io.easydoge.km.StoredWalletProtection
 import io.easydoge.km.WireCodec
+import io.easydoge.km.WireEnumCodec
 import uniffi.easydoge_km_ffi.AuditedInput
 import uniffi.easydoge_km_ffi.ChangeDestination
 import uniffi.easydoge_km_ffi.CoinSelectionStrategy
@@ -46,22 +46,22 @@ class EasyDogeKMModule : Module() {
         AsyncFunction("generateMnemonic") { options: Map<String, Any>? ->
             sdk.generateMnemonic(
                 MnemonicOptions(
-                    parseLanguage(options?.get("language") as? String),
+                    WireEnumCodec.language(options?.get("language"), "language"),
                     WireCodec.uint16(options?.get("wordCount") ?: 24, "wordCount"),
                 ),
             ).toMap()
         }
 
         AsyncFunction("validateMnemonic") { phrase: String, language: String? ->
-            validateMnemonic(phrase, parseLanguage(language))
+            validateMnemonic(phrase, WireEnumCodec.language(language, "language"))
         }
 
         AsyncFunction("mnemonicToSeedHex") { phrase: String, passphrase: String?, language: String? ->
-            sdk.mnemonicToSeedHex(phrase, passphrase, parseLanguage(language))
+            sdk.mnemonicToSeedHex(phrase, passphrase, WireEnumCodec.language(language, "language"))
         }
 
         AsyncFunction("accountKeysFromMnemonic") { phrase: String, passphrase: String?, language: String, network: String, account: Double ->
-            sdk.accountKeys(phrase, passphrase, parseLanguage(language), parseNetwork(network), WireCodec.uint32(account, "account")).toMap()
+            sdk.accountKeys(phrase, passphrase, WireEnumCodec.language(language, "language"), WireEnumCodec.network(network, "network"), WireCodec.uint32(account, "account")).toMap()
         }
 
         AsyncFunction("deriveAddressFromXpriv") { xpriv: Map<String, Any?>, path: String ->
@@ -89,11 +89,11 @@ class EasyDogeKMModule : Module() {
         }
 
         AsyncFunction("addressFromWif") { network: String, wif: String ->
-            uniffi.easydoge_km_ffi.addressFromWif(parseNetwork(network), wif).toMap()
+            uniffi.easydoge_km_ffi.addressFromWif(WireEnumCodec.network(network, "network"), wif).toMap()
         }
 
         AsyncFunction("validateAddress") { network: String, address: String ->
-            validateAddress(parseNetwork(network), address)
+            validateAddress(WireEnumCodec.network(network, "network"), address)
         }
 
         AsyncFunction("inspectXpriv") { xpriv: Map<String, Any?> ->
@@ -106,7 +106,7 @@ class EasyDogeKMModule : Module() {
 
         AsyncFunction("createMultisigDescriptor") { network: String, threshold: Double, cosignerXpubs: List<Map<String, Any?>>, childPath: String, sorted: Boolean ->
             sdk.createMultisigDescriptor(
-                parseNetwork(network),
+                WireEnumCodec.network(network, "network"),
                 WireCodec.uint8(threshold, "threshold"),
                 cosignerXpubs.map { it.toXpub() },
                 childPath,
@@ -115,16 +115,16 @@ class EasyDogeKMModule : Module() {
         }
 
         AsyncFunction("signMessage") { network: String, wif: String, message: String ->
-            sdk.signMessage(parseNetwork(network), wif, message).toMap()
+            sdk.signMessage(WireEnumCodec.network(network, "network"), wif, message).toMap()
         }
 
         AsyncFunction("verifyMessage") { network: String, address: String, signatureBase64: String, message: String ->
-            sdk.verifyMessage(parseNetwork(network), address, signatureBase64, message)
+            sdk.verifyMessage(WireEnumCodec.network(network, "network"), address, signatureBase64, message)
         }
 
         AsyncFunction("signP2pkhTransaction") { network: String, unsignedTxHex: String, inputIndex: Double, scriptPubkeyHex: String, wif: String, sighashType: Double ->
             sdk.signP2pkhTransaction(
-                parseNetwork(network),
+                WireEnumCodec.network(network, "network"),
                 unsignedTxHex,
                 WireCodec.uint64(inputIndex, "inputIndex"),
                 scriptPubkeyHex,
@@ -150,11 +150,11 @@ class EasyDogeKMModule : Module() {
         }
 
         AsyncFunction("storeMnemonic") { phrase: String, protection: String ->
-            store.storeMnemonic(phrase, parseProtection(protection)).toMap()
+            store.storeMnemonic(phrase, WireEnumCodec.protection(protection, "protection")).toMap()
         }
 
         AsyncFunction("exportMnemonic") { handle: Map<String, String>, protection: String ->
-            store.exportMnemonic(StoredWalletHandle(handle["id"] ?: ""), parseProtection(protection))
+            store.exportMnemonic(StoredWalletHandle(handle["id"] ?: ""), WireEnumCodec.protection(protection, "protection"))
         }
 
         AsyncFunction("protectionLevel") { handle: Map<String, String> ->
@@ -165,31 +165,6 @@ class EasyDogeKMModule : Module() {
             }
         }
     }
-}
-
-private fun parseNetwork(value: String?): Network = when (value) {
-    "testnet" -> Network.TESTNET
-    "regtest" -> Network.REGTEST
-    else -> Network.MAINNET
-}
-
-private fun parseLanguage(value: String?): Language = when (value) {
-    "simplified-chinese" -> Language.SIMPLIFIED_CHINESE
-    "traditional-chinese" -> Language.TRADITIONAL_CHINESE
-    "czech" -> Language.CZECH
-    "french" -> Language.FRENCH
-    "italian" -> Language.ITALIAN
-    "japanese" -> Language.JAPANESE
-    "korean" -> Language.KOREAN
-    "portuguese" -> Language.PORTUGUESE
-    "spanish" -> Language.SPANISH
-    else -> Language.ENGLISH
-}
-
-private fun parseProtection(value: String): StoredWalletProtection = when (value) {
-    "device-credential" -> StoredWalletProtection.DeviceCredential
-    "biometric" -> StoredWalletProtection.Biometric
-    else -> StoredWalletProtection.NoPrompt
 }
 
 private fun parseSigningInputKind(value: String?): SigningInputKind = when (value) {
@@ -220,8 +195,8 @@ private fun parseCoinSelectionStrategy(value: String?): CoinSelectionStrategy = 
 }
 
 private fun StoredWalletHandle.toMap(): Map<String, String> = mapOf("id" to id)
-private fun Map<String, Any?>.toXpriv(): Xpriv = Xpriv(parseNetwork(this["network"] as? String), this["encoded"] as? String ?: "")
-private fun Map<String, Any?>.toXpub(): Xpub = Xpub(parseNetwork(this["network"] as? String), this["encoded"] as? String ?: "")
+private fun Map<String, Any?>.toXpriv(): Xpriv = Xpriv(WireEnumCodec.network(this["network"], "network"), this["encoded"] as? String ?: "")
+private fun Map<String, Any?>.toXpub(): Xpub = Xpub(WireEnumCodec.network(this["network"], "network"), this["encoded"] as? String ?: "")
 
 private fun uniffi.easydoge_km_ffi.GeneratedMnemonic.toMap(): Map<String, Any> =
     mapOf("phrase" to phrase, "language" to language.raw(), "wordCount" to wordCount.toInt())
@@ -288,7 +263,7 @@ private fun uniffi.easydoge_km_ffi.SignedTransaction.toMap(): Map<String, Any> =
 private fun Map<String, Any?>.toSigningEnvelope(): SigningEnvelope =
     SigningEnvelope(
         version = WireCodec.uint8(this["version"] ?: 1, "version"),
-        network = parseNetwork(this["network"] as? String),
+        network = WireEnumCodec.network(this["network"], "network"),
         unsignedTxHex = this["unsignedTxHex"] as? String ?: "",
         inputs = (this["inputs"] as? List<Map<String, Any?>>).orEmpty().map { it.toSigningEnvelopeInput() },
         signatures = (this["signatures"] as? List<Map<String, Any?>>).orEmpty().map { it.toSigningEnvelopeSignature() },
@@ -390,7 +365,7 @@ private fun Map<String, Any?>.stringList(key: String): List<String> =
 
 private fun Map<String, Any?>.toComposeTransactionRequest(): ComposeTransactionRequest =
     ComposeTransactionRequest(
-        network = parseNetwork(this["network"] as? String),
+        network = WireEnumCodec.network(this["network"], "network"),
         utxos = dictionaries("utxos").map { it.toSpendableUtxo() },
         outputs = dictionaries("outputs").map { it.toTransactionOutput() },
         feePolicy = dictionary("feePolicy").toFeePolicy(),
