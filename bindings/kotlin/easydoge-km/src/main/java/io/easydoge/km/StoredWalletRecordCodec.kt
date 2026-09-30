@@ -16,6 +16,7 @@ object StoredWalletRecordCodec {
             HEADER,
             "id=${record.handle.id}",
             "protection=${record.protectionLevel.name}",
+            "mode=${record.protection.name}",
             "iv=${hex(record.iv)}",
             "ciphertext=${hex(record.ciphertext)}",
         ).joinToString("\n", postfix = "\n")
@@ -34,11 +35,18 @@ object StoredWalletRecordCodec {
         val protection = fields["protection"]?.let { name ->
             StorageProtectionLevel.entries.firstOrNull { it.name == name }
         } ?: error("Stored wallet record has an unknown protection level")
+        // Records written before the mode was persisted have no "mode" line. Those records were
+        // always created without a prompt, so they decode as NoPrompt.
+        val mode = fields["mode"]?.let { name ->
+            StoredWalletProtection.entries.firstOrNull { it.name == name }
+                ?: error("Stored wallet record has an unknown protection mode")
+        } ?: StoredWalletProtection.NoPrompt
         return StoredWalletRecord(
             handle = StoredWalletHandle(id),
             ciphertext = unhex(fields["ciphertext"] ?: error("Stored wallet record is missing ciphertext")),
             iv = unhex(fields["iv"] ?: error("Stored wallet record is missing iv")),
             protectionLevel = protection,
+            protection = mode,
         )
     }
 

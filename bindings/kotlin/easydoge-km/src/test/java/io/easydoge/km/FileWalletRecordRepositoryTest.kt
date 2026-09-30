@@ -16,6 +16,7 @@ class FileWalletRecordRepositoryTest {
         ciphertext = byteArrayOf(9, 8, 7),
         iv = ByteArray(12) { 1 },
         protectionLevel = StorageProtectionLevel.OsBacked,
+        protection = StoredWalletProtection.DeviceCredential,
     )
 
     @Test
@@ -27,6 +28,7 @@ class FileWalletRecordRepositoryTest {
         assertContentEquals(record.ciphertext, loaded.ciphertext)
         assertContentEquals(record.iv, loaded.iv)
         assertEquals(record.protectionLevel, loaded.protectionLevel)
+        assertEquals(record.protection, loaded.protection)
         assertEquals(listOf("$id.record"), directory.list()!!.toList())
     }
 

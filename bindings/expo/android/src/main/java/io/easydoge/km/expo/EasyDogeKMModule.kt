@@ -1,8 +1,10 @@
 package io.easydoge.km.expo
 
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import io.easydoge.km.AndroidKeystoreWalletSecretStore
+import io.easydoge.km.BiometricPromptWalletAuthenticator
 import io.easydoge.km.EasyDogeKM
 import io.easydoge.km.StoredWalletHandle
 import io.easydoge.km.WireCodec
@@ -37,6 +39,7 @@ class EasyDogeKMModule : Module() {
     private val store by lazy {
         AndroidKeystoreWalletSecretStore.persistent(
             requireNotNull(appContext.reactContext) { "EasyDogeKM stored wallets require an Android context" },
+            BiometricPromptWalletAuthenticator { appContext.currentActivity },
         )
     }
 
@@ -149,15 +152,15 @@ class EasyDogeKMModule : Module() {
             sdk.composeAndSignTransaction(request.toComposeTransactionRequest()).toMap()
         }
 
-        AsyncFunction("storeMnemonic") { phrase: String, protection: String ->
+        AsyncFunction("storeMnemonic") Coroutine { phrase: String, protection: String ->
             store.storeMnemonic(phrase, WireEnumCodec.protection(protection, "protection")).toMap()
         }
 
-        AsyncFunction("exportMnemonic") { handle: Map<String, String>, protection: String ->
+        AsyncFunction("exportMnemonic") Coroutine { handle: Map<String, String>, protection: String ->
             store.exportMnemonic(StoredWalletHandle(handle["id"] ?: ""), WireEnumCodec.protection(protection, "protection"))
         }
 
-        AsyncFunction("protectionLevel") { handle: Map<String, String> ->
+        AsyncFunction("protectionLevel") Coroutine { handle: Map<String, String> ->
             when (store.protectionLevel(StoredWalletHandle(handle["id"] ?: ""))) {
                 io.easydoge.km.StorageProtectionLevel.HardwareBacked -> "hardware-backed"
                 io.easydoge.km.StorageProtectionLevel.OsBacked -> "os-backed"

@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class StoredWalletRecordCodecTest {
     private val record = StoredWalletRecord(
@@ -11,6 +12,7 @@ class StoredWalletRecordCodecTest {
         ciphertext = byteArrayOf(0, 1, 2, 0xff.toByte()),
         iv = ByteArray(12) { it.toByte() },
         protectionLevel = StorageProtectionLevel.HardwareBacked,
+        protection = StoredWalletProtection.Biometric,
     )
 
     @Test
@@ -20,6 +22,32 @@ class StoredWalletRecordCodecTest {
         assertContentEquals(record.ciphertext, decoded.ciphertext)
         assertContentEquals(record.iv, decoded.iv)
         assertEquals(record.protectionLevel, decoded.protectionLevel)
+        assertEquals(record.protection, decoded.protection)
+    }
+
+    @Test
+    fun roundTripsEveryProtectionMode() {
+        for (mode in StoredWalletProtection.entries) {
+            val encoded = StoredWalletRecordCodec.encode(record.copy(protection = mode))
+            assertTrue(encoded.lines().contains("mode=${mode.name}"))
+            assertEquals(mode, StoredWalletRecordCodec.decode(encoded).protection)
+        }
+    }
+
+    @Test
+    fun recordsWithoutAModeLineDecodeAsNoPrompt() {
+        val legacy = StoredWalletRecordCodec.encode(record).lines().filterNot { it.startsWith("mode=") }.joinToString("\n")
+        val decoded = StoredWalletRecordCodec.decode(legacy)
+        assertEquals(StoredWalletProtection.NoPrompt, decoded.protection)
+        assertEquals(record.protectionLevel, decoded.protectionLevel)
+        assertContentEquals(record.ciphertext, decoded.ciphertext)
+    }
+
+    @Test
+    fun rejectsAnUnknownProtectionMode() {
+        val unknown = StoredWalletRecordCodec.encode(record).replace("mode=Biometric", "mode=Retina")
+        val error = assertFailsWith<IllegalStateException> { StoredWalletRecordCodec.decode(unknown) }
+        assertEquals("Stored wallet record has an unknown protection mode", error.message)
     }
 
     @Test

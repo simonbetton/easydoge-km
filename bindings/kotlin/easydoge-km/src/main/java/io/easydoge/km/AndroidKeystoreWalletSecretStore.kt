@@ -1,40 +1,52 @@
 package io.easydoge.km
 
 import android.os.Build
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 data class StoredWalletRecord(
     val handle: StoredWalletHandle,
     val ciphertext: ByteArray,
     val iv: ByteArray,
     val protectionLevel: StorageProtectionLevel,
+    /** The protection mode chosen at storage time. It selects the prompt; the Keystore key enforces it. */
+    val protection: StoredWalletProtection,
 )
 
-class AndroidKeystoreWalletSecretStore(
+class AndroidKeystoreWalletSecretStore internal constructor(
     private val repository: WalletRecordRepository,
+    private val authenticator: WalletAuthenticator?,
+    private val vault: WalletKeyVault,
+    private val sdkInt: Int,
 ) : WalletSecretStore {
+    /**
+     * [authenticator] shows the user-authentication prompt. It is required for the
+     * `DeviceCredential` and `Biometric` modes; without it only `NoPrompt` wallets work.
+     */
+    constructor(
+        repository: WalletRecordRepository,
+        authenticator: WalletAuthenticator? = null,
+    ) : this(repository, authenticator, AndroidKeystoreKeyVault(), Build.VERSION.SDK_INT)
+
     override suspend fun storeMnemonic(
         mnemonic: String,
         protection: StoredWalletProtection,
     ): StoredWalletHandle {
+        // Both checks fail closed before any key is created.
+        val policy = WalletProtectionPolicy.keyAuthPolicy(protection, sdkInt)
+        val prompt = WalletProtectionPolicy.requireAuthenticator(protection, authenticator)
         val id = java.util.UUID.randomUUID().toString()
         val alias = alias(id)
-        val protectionLevel = createKey(alias, protection)
+        val protectionLevel = vault.createKey(alias, policy)
         try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, requireKey(alias))
+            var cipher = vault.encryptCipher(alias)
+            if (prompt != null) {
+                cipher = prompt.authorize(cipher, protection)
+            }
             val ciphertext = cipher.doFinal(mnemonic.encodeToByteArray())
-            val record = StoredWalletRecord(StoredWalletHandle(id), ciphertext, cipher.iv, protectionLevel)
+            val record = StoredWalletRecord(StoredWalletHandle(id), ciphertext, cipher.iv, protectionLevel, protection)
             repository.save(record)
             return record.handle
         } catch (error: Exception) {
-            deleteKey(alias)
+            vault.deleteKey(alias)
             throw error
         }
     }
@@ -44,77 +56,30 @@ class AndroidKeystoreWalletSecretStore(
         protection: StoredWalletProtection,
     ): String {
         val record = repository.load(handle.id) ?: error("Stored wallet handle not found")
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, requireKey(alias(handle.id)), GCMParameterSpec(128, record.iv))
+        val stored = WalletProtectionPolicy.resolveExportProtection(record.protection, protection)
+        val prompt = WalletProtectionPolicy.requireAuthenticator(stored, authenticator)
+        var cipher = vault.decryptCipher(alias(handle.id), record.iv)
+        if (prompt != null) {
+            cipher = prompt.authorize(cipher, stored)
+        }
         return cipher.doFinal(record.ciphertext).decodeToString()
     }
 
     override suspend fun protectionLevel(handle: StoredWalletHandle): StorageProtectionLevel =
         repository.load(handle.id)?.protectionLevel ?: StorageProtectionLevel.Unsupported
 
-    private fun createKey(alias: String, protection: StoredWalletProtection): StorageProtectionLevel {
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        val builder = KeyGenParameterSpec.Builder(
-            alias,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setRandomizedEncryptionRequired(true)
-
-        if (protection != StoredWalletProtection.NoPrompt) {
-            builder.setUserAuthenticationRequired(true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                builder.setUserAuthenticationParameters(
-                    0,
-                    KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-                )
-            }
-        }
-
-        val requestedStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-        if (requestedStrongBox) {
-            try {
-                builder.setIsStrongBoxBacked(true)
-                generator.init(builder.build())
-                generator.generateKey()
-                return StorageProtectionLevel.HardwareBacked
-            } catch (_: Exception) {
-                // Fall through to standard Android Keystore.
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            builder.setIsStrongBoxBacked(false)
-        }
-        generator.init(builder.build())
-        generator.generateKey()
-        return StorageProtectionLevel.OsBacked
-    }
-
-    private fun requireKey(alias: String): SecretKey =
-        keyStore().getKey(alias, null) as? SecretKey
-            ?: error("Stored wallet key is missing or was invalidated")
-
-    private fun deleteKey(alias: String) {
-        runCatching { keyStore().deleteEntry(alias) }
-    }
-
-    private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-
     private fun alias(id: String): String = "io.easydoge.km.wallet.$id"
 
     companion object {
-        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-
         /** Records persist in app-private, no-backup storage. Use this in apps. */
-        fun persistent(context: android.content.Context): AndroidKeystoreWalletSecretStore =
-            AndroidKeystoreWalletSecretStore(FileWalletRecordRepository.fromContext(context))
+        fun persistent(
+            context: android.content.Context,
+            authenticator: WalletAuthenticator? = null,
+        ): AndroidKeystoreWalletSecretStore =
+            AndroidKeystoreWalletSecretStore(FileWalletRecordRepository.fromContext(context), authenticator)
 
         /** Records live only for the current process. Tests and demos only. */
-        fun inMemory(): AndroidKeystoreWalletSecretStore =
-            AndroidKeystoreWalletSecretStore(InMemoryWalletRecordRepository())
+        fun inMemory(authenticator: WalletAuthenticator? = null): AndroidKeystoreWalletSecretStore =
+            AndroidKeystoreWalletSecretStore(InMemoryWalletRecordRepository(), authenticator)
     }
 }
-
