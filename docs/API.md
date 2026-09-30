@@ -52,7 +52,7 @@ Swift and Kotlin additionally expose `WalletSecretStore`; Expo exposes `storeMne
 
 The request includes:
 
-- `utxos`: display/RPC `txid` hex, `vout`, `previous_output_value_koinu`, `script_pubkey_hex`, spend kind, signer metadata, and P2SH multisig descriptor metadata when needed.
+- `utxos`: display/RPC `txid` hex, `vout`, `previous_output_value_koinu`, `script_pubkey_hex`, spend kind, and signer metadata. P2SH multisig UTXOs also require `redeem_script_hex`; `multisig_threshold` and `multisig_public_keys_hex` are optional.
 - `outputs`: address outputs, zero-value OP_RETURN data outputs, or `ExpertRawScript` outputs.
 - `fee_policy`: `fee_rate_koinu_per_kb` and `dust_threshold_koinu`.
 - `coin_selection`: `MinInputs`, `SmallestFirst`, `LargestFirst`, or `ManualSelectedInputs`.
@@ -63,7 +63,7 @@ Each UTXO outpoint (`txid:vout`) may be listed once per request. A request that 
 
 The result reports selected and skipped inputs, input total, spend output total, change amount/address/script, fee, estimated serialized size, actual serialized size when signed, whether dust change was folded into the fee, unsigned tx hex, signed tx hex when complete, and a signing envelope when P2PKH or multisig signatures are missing. These totals use caller-provided UTXO values; they are not an independent audit of chain data.
 
-Signer ownership is checked before signing. P2PKH signers must match the previous output script pubkey. P2SH multisig UTXOs must have a script pubkey matching the redeem script, and signatures only count when the public key is part of the expected multisig set.
+Each UTXO the builder selects is validated before it contributes to the size estimate, and signer ownership is checked before signing. P2PKH UTXOs must carry a canonical 25-byte pay-to-pubkey-hash script pubkey, and P2PKH signers must match it. P2SH multisig UTXOs must carry a redeem script of the form `m <33-byte public keys> n OP_CHECKMULTISIG` that hashes to the script pubkey. The threshold used for fee sizing, and the threshold and public keys written to a returned signing envelope (in redeem-script order), are read from that redeem script. `multisig_threshold` and `multisig_public_keys_hex` are optional cross-checks: when supplied they must agree with the redeem script, otherwise composing fails with `multisig threshold metadata does not match redeem script` or `multisig public key metadata does not match redeem script`. Signatures only count when the public key is part of the redeem script.
 
 CLI example:
 

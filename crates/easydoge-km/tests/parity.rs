@@ -1327,3 +1327,197 @@ fn p2sh_multisig_with_a_repeated_key_finalizes_only_with_distinct_signers() {
         ]
     );
 }
+
+/// Public keys of the synthetic 2-of-3 redeem script used by the builder's
+/// P2SH Multisig fee tests, in redeem-script order.
+const FEE_FIXTURE_MULTISIG_KEYS: [&str; 3] = [
+    "020000000000000000000000000000000000000000000000000000000000000001",
+    "030000000000000000000000000000000000000000000000000000000000000002",
+    "020000000000000000000000000000000000000000000000000000000000000003",
+];
+
+fn fee_fixture_multisig_keys() -> Vec<String> {
+    FEE_FIXTURE_MULTISIG_KEYS
+        .iter()
+        .map(|key| (*key).to_owned())
+        .collect()
+}
+
+/// A request that spends one 2-of-3 P2SH Multisig UTXO to a single 9_000 koinu
+/// address output, with no change destination and no signers. The caller
+/// chooses the UTXO value and the multisig metadata the UTXO declares.
+fn two_of_three_p2sh_request(
+    previous_output_value_koinu: u64,
+    multisig_threshold: Option<u8>,
+    multisig_public_keys_hex: Vec<String>,
+) -> ComposeTransactionRequest {
+    let txid = "8888888888888888888888888888888888888888888888888888888888888888";
+    let mut request = compose_request_base(txid, previous_output_value_koinu);
+    let redeem_script_hex = format!(
+        "52{}53ae",
+        FEE_FIXTURE_MULTISIG_KEYS
+            .iter()
+            .map(|public_key| format!("21{public_key}"))
+            .collect::<String>()
+    );
+    let script_hash = hash160::Hash::hash(&hex::decode(&redeem_script_hex).unwrap());
+    request.utxos[0] = SpendableUtxo {
+        txid: txid.to_owned(),
+        vout: 0,
+        previous_output_value_koinu,
+        script_pubkey_hex: format!("a914{}87", hex::encode(script_hash)),
+        kind: SigningInputKind::P2shMultisig,
+        redeem_script_hex: Some(redeem_script_hex),
+        multisig_threshold,
+        multisig_public_keys_hex,
+        signers: vec![],
+        manually_selected: false,
+    };
+    request.change = None;
+    request.outputs[0].value_koinu = 9_000;
+    request
+}
+
+#[test]
+fn compose_builder_rejects_multisig_threshold_metadata_that_differs_from_redeem_script() {
+    // The redeem script is 2-of-3. A declared threshold of 1 used to size the
+    // transaction at 267 bytes instead of 343, so a 9_267 koinu UTXO "funded"
+    // a 9_000 koinu spend whose real fee requirement is 343 koinu.
+    for declared in [1u8, 3, 0] {
+        let request = two_of_three_p2sh_request(9_267, Some(declared), fee_fixture_multisig_keys());
+        let error = compose_and_sign_transaction(&request).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("multisig threshold metadata does not match redeem script"),
+            "declared threshold {declared}: {error}"
+        );
+    }
+}
+
+#[test]
+fn compose_builder_derives_p2sh_multisig_fee_and_envelope_metadata_from_redeem_script() {
+    let request = two_of_three_p2sh_request(9_343, None, vec![]);
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(result.estimated_size_bytes, 343);
+    assert_eq!(result.fee_koinu, 343);
+    assert!(result.signed_tx_hex.is_none());
+    let envelope = result
+        .signing_envelope
+        .expect("no signers were supplied, so a signing envelope is returned");
+    assert_eq!(envelope.inputs.len(), 1);
+    assert_eq!(envelope.inputs[0].multisig_threshold, Some(2));
+    assert_eq!(
+        envelope.inputs[0].multisig_public_keys_hex,
+        fee_fixture_multisig_keys()
+    );
+}
+
+#[test]
+fn compose_builder_emits_envelope_multisig_keys_in_redeem_script_order() {
+    let mut reversed = fee_fixture_multisig_keys();
+    reversed.reverse();
+    let request = two_of_three_p2sh_request(9_343, Some(2), reversed);
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(result.estimated_size_bytes, 343);
+    let envelope = result.signing_envelope.unwrap();
+    assert_eq!(envelope.inputs[0].multisig_threshold, Some(2));
+    assert_eq!(
+        envelope.inputs[0].multisig_public_keys_hex,
+        fee_fixture_multisig_keys()
+    );
+}
+
+#[test]
+fn compose_builder_rejects_multisig_public_key_metadata_that_differs_from_redeem_script() {
+    let mut substituted = fee_fixture_multisig_keys();
+    substituted[2] =
+        "020000000000000000000000000000000000000000000000000000000000000004".to_owned();
+    let mut truncated = fee_fixture_multisig_keys();
+    truncated.pop();
+    for declared in [substituted, truncated] {
+        let request = two_of_three_p2sh_request(9_343, Some(2), declared);
+        let error = compose_and_sign_transaction(&request).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("multisig public key metadata does not match redeem script"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn compose_builder_signs_p2sh_multisig_without_metadata_within_the_estimated_size() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let mut request = compose_request_base(
+        "9999999999999999999999999999999999999999999999999999999999999999",
+        100_000_000,
+    );
+    let utxo = &mut request.utxos[0];
+    utxo.kind = SigningInputKind::P2shMultisig;
+    utxo.script_pubkey_hex = fixture.envelope.inputs[0].script_pubkey_hex.clone();
+    utxo.redeem_script_hex = Some(fixture.descriptor.redeem_script_hex.clone());
+    utxo.multisig_threshold = None;
+    utxo.multisig_public_keys_hex = vec![];
+    utxo.signers = fixture
+        .wifs
+        .iter()
+        .map(|wif| UtxoSigner {
+            kind: UtxoSignerKind::Wif,
+            wif: Some(wif.clone()),
+            xpriv: None,
+            derivation_path: None,
+        })
+        .collect();
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    // 10 bytes of overhead + a 262-byte input (221-byte worst-case scriptSig)
+    // + a 34-byte spend output + a 34-byte change output.
+    assert_eq!(result.estimated_size_bytes, 340);
+    assert_eq!(result.fee_koinu, 340);
+    assert_eq!(result.change_amount_koinu, 100_000_000 - 50_000_000 - 340);
+    assert!(result.signing_envelope.is_none());
+    let signed_tx_hex = result.signed_tx_hex.expect("both cosigners signed");
+    let actual_size_bytes = result
+        .actual_size_bytes
+        .expect("a signed transaction reports its size");
+    assert_eq!(actual_size_bytes, signed_tx_hex.len() as u64 / 2);
+    assert!(
+        actual_size_bytes <= result.estimated_size_bytes,
+        "actual size {actual_size_bytes} exceeds the estimate {}",
+        result.estimated_size_bytes
+    );
+}
+
+#[test]
+fn compose_builder_rejects_p2pkh_utxo_whose_script_pubkey_is_not_pay_to_pubkey_hash() {
+    for script_pubkey_hex in [
+        // P2SH-shaped (23 bytes).
+        "a914000000000000000000000000000000000000000087",
+        // 25 bytes, but ends with OP_EQUAL OP_CHECKSIG instead of
+        // OP_EQUALVERIFY OP_CHECKSIG.
+        "76a914000000000000000000000000000000000000000087ac",
+        // Empty script.
+        "",
+    ] {
+        let mut request = compose_request_base(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            100_000_000,
+        );
+        request.utxos[0].script_pubkey_hex = script_pubkey_hex.to_owned();
+        request.utxos[0].signers = vec![];
+        let error = compose_and_sign_transaction(&request).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("P2PKH UTXO script pubkey is not a pay-to-pubkey-hash script"),
+            "script pubkey {script_pubkey_hex:?}: {error}"
+        );
+    }
+}

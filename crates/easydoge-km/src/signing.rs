@@ -408,17 +408,11 @@ fn validate_envelope<'a>(
                         "P2PKH input {index} must not include a redeem script"
                     )));
                 }
-                let bytes = script_pubkey.as_bytes();
-                let is_p2pkh = bytes.len() == 25
-                    && bytes[0..3] == [0x76, 0xa9, 0x14]
-                    && bytes[23..25] == [0x88, 0xac];
-                if !is_p2pkh {
-                    return Err(Error::InvalidTransaction(format!(
+                let hash = p2pkh_pubkey_hash(script_pubkey.as_bytes()).ok_or_else(|| {
+                    Error::InvalidTransaction(format!(
                         "P2PKH input {index} script pubkey is not a pay-to-pubkey-hash script"
-                    )));
-                }
-                let mut hash = [0u8; 20];
-                hash.copy_from_slice(&bytes[3..23]);
+                    ))
+                })?;
                 ValidatedInput {
                     descriptor,
                     signing_script: script_pubkey,
@@ -444,7 +438,11 @@ fn validate_envelope<'a>(
                         "P2SH input {index} script pubkey does not match redeem script"
                     )));
                 }
-                let metadata = multisig_metadata(descriptor, redeem_script_hex)?;
+                let metadata = multisig_metadata(
+                    redeem_script_hex,
+                    descriptor.multisig_threshold,
+                    &descriptor.multisig_public_keys_hex,
+                )?;
                 ValidatedInput {
                     descriptor,
                     signing_script: redeem_script,
@@ -542,28 +540,48 @@ fn push_bytes(bytes: Vec<u8>) -> Result<PushBytesBuf> {
     PushBytesBuf::try_from(bytes).map_err(|err| Error::Serialization(err.to_string()))
 }
 
-struct MultisigMetadata {
-    threshold: u8,
-    public_keys_hex: Vec<String>,
+/// Returns the 20-byte public key hash when `script_pubkey` is the canonical
+/// 25-byte pay-to-pubkey-hash script
+/// (`OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG`).
+pub(crate) fn p2pkh_pubkey_hash(script_pubkey: &[u8]) -> Option<[u8; 20]> {
+    let is_p2pkh = script_pubkey.len() == 25
+        && script_pubkey[0..3] == [0x76, 0xa9, 0x14]
+        && script_pubkey[23..25] == [0x88, 0xac];
+    if !is_p2pkh {
+        return None;
+    }
+    let mut hash = [0u8; 20];
+    hash.copy_from_slice(&script_pubkey[3..23]);
+    Some(hash)
 }
 
-fn multisig_metadata(
-    input: &SigningEnvelopeInput,
+/// Threshold and public keys of a P2SH multisig redeem script, with the keys
+/// in redeem-script order as lowercase hex.
+pub(crate) struct MultisigMetadata {
+    pub(crate) threshold: u8,
+    pub(crate) public_keys_hex: Vec<String>,
+}
+
+/// Parses the redeem script and checks any caller-declared threshold and
+/// public keys against it. The redeem script is the source of truth; the
+/// declared values are optional and only ever validated, never trusted.
+pub(crate) fn multisig_metadata(
     redeem_script_hex: &str,
+    declared_threshold: Option<u8>,
+    declared_public_keys_hex: &[String],
 ) -> Result<MultisigMetadata> {
     let parsed = parse_multisig_redeem_script(redeem_script_hex)?;
-    if let Some(threshold) = input.multisig_threshold {
+    if let Some(threshold) = declared_threshold {
         if threshold != parsed.threshold {
             return Err(Error::InvalidTransaction(
                 "multisig threshold metadata does not match redeem script".to_owned(),
             ));
         }
     }
-    if !input.multisig_public_keys_hex.is_empty() {
+    if !declared_public_keys_hex.is_empty() {
         // Compare as multisets: same keys, same number of times each, in any
         // order and any hex case.
-        let mut supplied = input
-            .multisig_public_keys_hex
+        let mut supplied = declared_public_keys_hex
             .iter()
             .map(|key| key.to_ascii_lowercase())
             .collect::<Vec<_>>();
@@ -577,12 +595,12 @@ fn multisig_metadata(
         }
     }
     Ok(MultisigMetadata {
-        threshold: input.multisig_threshold.unwrap_or(parsed.threshold),
+        threshold: declared_threshold.unwrap_or(parsed.threshold),
         public_keys_hex: parsed.public_keys_hex,
     })
 }
 
-fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
+pub(crate) fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
     let bytes = hex::decode(redeem_script_hex)
         .map_err(|err| Error::Serialization(format!("invalid redeem script hex: {err}")))?;
     if bytes.len() > MAX_P2SH_REDEEM_SCRIPT_BYTES {

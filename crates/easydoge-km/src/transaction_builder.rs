@@ -15,9 +15,9 @@ use std::str::FromStr;
 use crate::encoding::{base58check_decode, hash160_bytes, wif};
 use crate::keys::{decode_xpriv, derive_path_from_xpriv, secret_key_from_wif, Xpriv};
 use crate::signing::{
-    finalize_signing_envelope, sign_signing_envelope, validate_sighash_type,
-    validated_sighash_flag, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
-    SigningInputKind,
+    finalize_signing_envelope, multisig_metadata, p2pkh_pubkey_hash, parse_multisig_redeem_script,
+    sign_signing_envelope, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
+    SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
 };
 use crate::{Error, Network, Result};
 
@@ -267,17 +267,10 @@ pub fn compose_and_sign_transaction(
         inputs: selected_utxos
             .iter()
             .enumerate()
-            .map(|(input_index, utxo)| SigningEnvelopeInput {
-                input_index,
-                kind: utxo.kind.clone(),
-                script_pubkey_hex: utxo.script_pubkey_hex.clone(),
-                redeem_script_hex: utxo.redeem_script_hex.clone(),
-                sighash_type: request.options.sighash_type,
-                previous_output_value_koinu: Some(utxo.previous_output_value_koinu),
-                multisig_threshold: utxo.multisig_threshold,
-                multisig_public_keys_hex: utxo.multisig_public_keys_hex.clone(),
+            .map(|(input_index, utxo)| {
+                envelope_input(input_index, utxo, request.options.sighash_type)
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
         signatures: vec![],
     };
 
@@ -575,12 +568,17 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
 
 fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
     parse_txid(&utxo.txid)?;
-    parse_script(&utxo.script_pubkey_hex)?;
+    let script_pubkey = parse_script(&utxo.script_pubkey_hex)?;
     match utxo.kind {
         SigningInputKind::P2pkh => {
             if utxo.redeem_script_hex.is_some() {
                 return Err(Error::InvalidTransaction(
                     "P2PKH UTXO must not include redeem script".to_owned(),
+                ));
+            }
+            if p2pkh_pubkey_hash(script_pubkey.as_bytes()).is_none() {
+                return Err(Error::InvalidTransaction(
+                    "P2PKH UTXO script pubkey is not a pay-to-pubkey-hash script".to_owned(),
                 ));
             }
         }
@@ -595,21 +593,13 @@ fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
                     "P2SH script pubkey does not match redeem script".to_owned(),
                 ));
             }
-            if let Some(threshold) = utxo.multisig_threshold {
-                if threshold == 0 {
-                    return Err(Error::InvalidTransaction(
-                        "multisig threshold must be greater than zero".to_owned(),
-                    ));
-                }
-            }
-            if !utxo.multisig_public_keys_hex.is_empty()
-                && usize::from(utxo.multisig_threshold.unwrap_or(0))
-                    > utxo.multisig_public_keys_hex.len()
-            {
-                return Err(Error::InvalidTransaction(
-                    "multisig threshold exceeds public key count".to_owned(),
-                ));
-            }
+            // The redeem script is the source of truth. Declared threshold and
+            // public keys are optional and must agree with it when present.
+            multisig_metadata(
+                redeem_script_hex,
+                utxo.multisig_threshold,
+                &utxo.multisig_public_keys_hex,
+            )?;
         }
     }
     for signer in &utxo.signers {
@@ -617,6 +607,43 @@ fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
         validate_signer_ownership(utxo, &resolved)?;
     }
     Ok(())
+}
+
+/// Threshold and public keys parsed from a P2SH Multisig UTXO's Redeem Script.
+/// Fee sizing and emitted Signing Envelope metadata come from here, never from
+/// the caller-declared `multisig_threshold` / `multisig_public_keys_hex`.
+fn redeem_script_multisig(utxo: &SpendableUtxo) -> Result<MultisigMetadata> {
+    let redeem_script_hex = utxo.redeem_script_hex.as_deref().ok_or_else(|| {
+        Error::InvalidTransaction("P2SH multisig UTXO requires redeem script".to_owned())
+    })?;
+    parse_multisig_redeem_script(redeem_script_hex)
+}
+
+fn envelope_input(
+    input_index: usize,
+    utxo: &SpendableUtxo,
+    sighash_type: u32,
+) -> Result<SigningEnvelopeInput> {
+    let (multisig_threshold, multisig_public_keys_hex) = match utxo.kind {
+        SigningInputKind::P2pkh => (
+            utxo.multisig_threshold,
+            utxo.multisig_public_keys_hex.clone(),
+        ),
+        SigningInputKind::P2shMultisig => {
+            let multisig = redeem_script_multisig(utxo)?;
+            (Some(multisig.threshold), multisig.public_keys_hex)
+        }
+    };
+    Ok(SigningEnvelopeInput {
+        input_index,
+        kind: utxo.kind.clone(),
+        script_pubkey_hex: utxo.script_pubkey_hex.clone(),
+        redeem_script_hex: utxo.redeem_script_hex.clone(),
+        sighash_type,
+        previous_output_value_koinu: Some(utxo.previous_output_value_koinu),
+        multisig_threshold,
+        multisig_public_keys_hex,
+    })
 }
 
 fn build_unsigned_transaction(
@@ -801,11 +828,7 @@ fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
     let script_sig_len = match utxo.kind {
         SigningInputKind::P2pkh => 1 + MAX_SIGNATURE_PUSH_BYTES + 1 + COMPRESSED_PUBLIC_KEY_BYTES,
         SigningInputKind::P2shMultisig => {
-            let threshold = utxo.multisig_threshold.ok_or_else(|| {
-                Error::InvalidTransaction(
-                    "P2SH multisig input size requires threshold metadata".to_owned(),
-                )
-            })? as usize;
+            let threshold = usize::from(redeem_script_multisig(utxo)?.threshold);
             let redeem_script_len =
                 parse_script(utxo.redeem_script_hex.as_deref().ok_or_else(|| {
                     Error::InvalidTransaction(
