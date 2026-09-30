@@ -1619,3 +1619,429 @@ fn compose_request_debug_output_redacts_signer_and_change_secrets() {
         assert!(debug.contains("[redacted]"), "no redaction marker");
     }
 }
+
+// ---- Resource limits at request boundaries (`easydoge_km::limits`) ----
+
+use easydoge_km::limits;
+
+/// Error text of a call that must fail. Unlike `unwrap_err`, a missing limit
+/// does not dump a megabyte-sized `Ok` value into the test output.
+fn limit_error<T>(result: easydoge_km::Result<T>) -> String {
+    match result {
+        Ok(_) => panic!("expected an error, but the call succeeded"),
+        Err(error) => error.to_string(),
+    }
+}
+
+/// `count` copies of `template` with distinct outpoints (vout 0, 1, 2, ...)
+/// and no signers, so the builder never signs and the tests stay fast.
+fn unsigned_utxo_clones(template: &SpendableUtxo, count: usize) -> Vec<SpendableUtxo> {
+    (0..count)
+        .map(|vout| SpendableUtxo {
+            vout: vout as u32,
+            signers: vec![],
+            ..template.clone()
+        })
+        .collect()
+}
+
+fn raw_script_output(script_hex: String) -> TransactionOutput {
+    TransactionOutput {
+        kind: TransactionOutputKind::ExpertRawScript,
+        value_koinu: 1_000,
+        address: None,
+        op_return_data_hex: None,
+        script_hex: Some(script_hex),
+    }
+}
+
+/// The parity transaction plus one padding output, serialized to exactly
+/// `target_len` bytes.
+fn unsigned_tx_hex_with_serialized_len(target_len: usize) -> String {
+    let mut tx: bitcoin::Transaction =
+        deserialize(&hex::decode(parity_unsigned_tx_hex()).unwrap()).unwrap();
+    tx.output.push(bitcoin::TxOut {
+        value: bitcoin::Amount::from_sat(0),
+        script_pubkey: bitcoin::ScriptBuf::new(),
+    });
+    // An empty script has a 1-byte length prefix; the padding script is longer
+    // than 65,535 bytes and has a 5-byte prefix, hence the extra 4 bytes.
+    let padding = target_len - serialize(&tx).len() - 4;
+    tx.output[1].script_pubkey = bitcoin::ScriptBuf::from_bytes(vec![0x6a; padding]);
+    let bytes = serialize(&tx);
+    assert_eq!(bytes.len(), target_len);
+    hex::encode(bytes)
+}
+
+#[test]
+fn compose_builder_rejects_more_utxos_than_the_request_limit() {
+    let mut request = compose_request_base(
+        "8888888888888888888888888888888888888888888888888888888888888888",
+        100_000_000,
+    );
+    let template = request.utxos[0].clone();
+
+    request.utxos = unsigned_utxo_clones(&template, limits::MAX_REQUEST_UTXOS);
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.selected_inputs.len(), 1);
+
+    request.utxos = unsigned_utxo_clones(&template, limits::MAX_REQUEST_UTXOS + 1);
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains("request has 10001 UTXOs, which exceeds the limit of 10000"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_more_outputs_than_the_request_limit() {
+    let mut request = compose_request_base(
+        "9999999999999999999999999999999999999999999999999999999999999999",
+        100_000_000,
+    );
+    request.utxos[0].signers = vec![];
+
+    // One-byte scripts make 10-byte outputs, so 3,200 of them stay far below
+    // the transaction size limit.
+    request.outputs = vec![raw_script_output("51".to_owned()); limits::MAX_REQUEST_OUTPUTS];
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.spend_output_total_koinu, 3_200_000);
+
+    request.outputs.push(raw_script_output("51".to_owned()));
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains("request has 3201 outputs, which exceeds the limit of 3200"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_more_signers_on_one_utxo_than_the_limit() {
+    let mut request = compose_request_base(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        100_000_000,
+    );
+    let signer = request.utxos[0].signers[0].clone();
+
+    request.utxos[0].signers = vec![signer.clone(); limits::MAX_SIGNERS_PER_UTXO];
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert!(result.signed_tx_hex.is_some());
+
+    request.utxos[0].signers.push(signer);
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains("UTXO at index 0 has 17 signers, which exceeds the limit of 16"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_scripts_longer_than_the_script_size_limit() {
+    let base = compose_request_base(
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        100_000_000,
+    );
+    let at_limit = "51".repeat(limits::MAX_SCRIPT_BYTES);
+    let over_limit = "51".repeat(limits::MAX_SCRIPT_BYTES + 1);
+    let limit_text = "has 20002 hex characters, which exceeds the limit of 20000 (10000 bytes)";
+
+    let mut request = base.clone();
+    request.outputs.push(raw_script_output(at_limit));
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert!(result.estimated_size_bytes > 10_000);
+
+    let mut request = base.clone();
+    request.outputs.push(raw_script_output(over_limit.clone()));
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains(&format!("output at index 1 script {limit_text}")),
+        "{error}"
+    );
+
+    let mut request = base.clone();
+    request.utxos[0].script_pubkey_hex = over_limit.clone();
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains(&format!("UTXO at index 0 script pubkey {limit_text}")),
+        "{error}"
+    );
+
+    let mut request = base;
+    request.utxos[0].redeem_script_hex = Some(over_limit);
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains(&format!("UTXO at index 0 redeem script {limit_text}")),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_payment_that_needs_more_inputs_than_a_standard_transaction_holds() {
+    // A P2PKH input is estimated at 149 bytes, so the 680 inputs this payment
+    // needs cannot fit in 99,999 bytes.
+    let mut request = compose_request_base(
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        1_000_000,
+    );
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+    let template = request.utxos[0].clone();
+    request.utxos = unsigned_utxo_clones(&template, 680);
+    request.outputs[0].value_koinu = 679_500_000;
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(error.contains("estimated transaction size is"), "{error}");
+    assert!(
+        error.contains("which exceeds the limit of 99999 bytes"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_accepts_transaction_estimated_at_exactly_the_size_limit() {
+    // 670 P2PKH inputs, the address output, one padding output and change:
+    // 12 + 670 * 149 + 34 + (9 + padding) + 34 bytes.
+    let request_with_padding = |padding_bytes: usize| {
+        let mut request = compose_request_base(
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            1_000_000,
+        );
+        request.coin_selection = CoinSelectionStrategy::LargestFirst;
+        let template = request.utxos[0].clone();
+        request.utxos = unsigned_utxo_clones(&template, 670);
+        request.outputs[0].value_koinu = 669_500_000;
+        request
+            .outputs
+            .push(raw_script_output("51".repeat(padding_bytes)));
+        request
+    };
+
+    let result = compose_and_sign_transaction(&request_with_padding(80)).unwrap();
+    assert_eq!(result.selected_inputs.len(), 670);
+    assert!(result.change_amount_koinu > 0);
+    assert_eq!(
+        result.estimated_size_bytes,
+        limits::MAX_TRANSACTION_BYTES as u64
+    );
+
+    let error = limit_error(compose_and_sign_transaction(&request_with_padding(81)));
+    assert!(
+        error.contains(
+            "estimated transaction size is 100000 bytes, which exceeds the limit of 99999 bytes"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn base58check_text_longer_than_an_extended_key_is_rejected_without_decoding() {
+    let over_limit = "2".repeat(limits::MAX_BASE58CHECK_CHARS + 1);
+    let error = limit_error(address_from_wif(Network::Mainnet, &over_limit));
+    assert!(
+        error.contains("base58check value has 113 characters, which exceeds the limit of 112"),
+        "{error}"
+    );
+
+    // The limit is about length only: 112 characters are still decoded, and
+    // rejected for what they are.
+    let at_limit = "2".repeat(limits::MAX_BASE58CHECK_CHARS);
+    let error = limit_error(address_from_wif(Network::Mainnet, &at_limit));
+    assert!(!error.contains("exceeds the limit"), "{error}");
+
+    // 100,000 characters take seconds to decode; with the limit they cost
+    // nothing. Address validation keeps answering "not an address".
+    let huge = "2".repeat(100_000);
+    assert!(!easydoge_km::validate_address(Network::Mainnet, &huge).unwrap());
+    assert!(inspect_address(&huge).unwrap().is_empty());
+    let mut request = compose_request_base(
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        100_000_000,
+    );
+    request.outputs[0].address = Some(huge);
+    let error = limit_error(compose_and_sign_transaction(&request));
+    assert!(
+        error.contains("base58check value has 100000 characters, which exceeds the limit of 112"),
+        "{error}"
+    );
+}
+
+#[test]
+fn signing_envelope_rejects_unsigned_transaction_above_the_size_limit() {
+    let mut envelope = p2pkh_envelope();
+
+    envelope.unsigned_tx_hex = unsigned_tx_hex_with_serialized_len(limits::MAX_TRANSACTION_BYTES);
+    let signed = sign_signing_envelope(&envelope, &parity_wif()).unwrap();
+    assert_eq!(signed.signatures.len(), 1);
+
+    envelope.unsigned_tx_hex =
+        unsigned_tx_hex_with_serialized_len(limits::MAX_TRANSACTION_BYTES + 1);
+    let error = limit_error(sign_signing_envelope(&envelope, &parity_wif()));
+    assert!(
+        error.contains(
+            "unsigned transaction has 200000 hex characters, which exceeds the limit of 199998 (99999 bytes)"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn signing_envelope_entry_points_check_transaction_size_before_decoding_hex() {
+    // Not hex at all: getting the size error proves nothing was decoded.
+    let oversized = "zz".repeat(limits::MAX_TRANSACTION_BYTES + 1);
+    let mut envelope = p2pkh_envelope();
+    envelope.unsigned_tx_hex = oversized.clone();
+
+    let errors = [
+        limit_error(sign_signing_envelope(&envelope, &parity_wif())),
+        limit_error(combine_signing_envelopes(std::slice::from_ref(&envelope))),
+        limit_error(finalize_signing_envelope(&envelope)),
+        limit_error(sign_p2pkh_transaction(
+            Network::Mainnet,
+            &oversized,
+            0,
+            &parity_script_pubkey_hex(),
+            &parity_wif(),
+            1,
+        )),
+    ];
+    for error in errors {
+        assert!(
+            error.contains(
+                "unsigned transaction has 200000 hex characters, which exceeds the limit of 199998 (99999 bytes)"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn signing_envelope_rejects_more_signatures_than_its_inputs_allow_before_verifying_them() {
+    let signed = sign_signing_envelope(&p2pkh_envelope(), &parity_wif()).unwrap();
+
+    // Sixteen copies of a valid signature on a one-input transaction are
+    // redundant but within the limit.
+    let mut at_limit = signed.clone();
+    at_limit.signatures =
+        vec![signed.signatures[0].clone(); limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT];
+    finalize_signing_envelope(&at_limit).unwrap();
+
+    // Seventeen entries that are not signatures at all: getting the count
+    // error proves none of them was decoded or verified.
+    let mut over_limit = signed;
+    over_limit.signatures = vec![
+        SigningEnvelopeSignature {
+            input_index: 0,
+            public_key_hex: "00".to_owned(),
+            signature_hex: "00".to_owned(),
+        };
+        limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT + 1
+    ];
+    let errors = [
+        limit_error(sign_signing_envelope(&over_limit, &parity_wif())),
+        limit_error(combine_signing_envelopes(std::slice::from_ref(&over_limit))),
+        limit_error(finalize_signing_envelope(&over_limit)),
+    ];
+    for error in errors {
+        assert!(
+            error.contains(
+                "signing envelope has 17 signatures, which exceeds the limit of 16 (16 per transaction input)"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn signing_envelope_rejects_descriptor_scripts_longer_than_the_script_size_limit() {
+    let over_limit = "51".repeat(limits::MAX_SCRIPT_BYTES + 1);
+    let limit_text = "has 20002 hex characters, which exceeds the limit of 20000 (10000 bytes)";
+
+    let mut envelope = p2pkh_envelope();
+    envelope.inputs[0].script_pubkey_hex = over_limit.clone();
+    let error = limit_error(sign_signing_envelope(&envelope, &parity_wif()));
+    assert!(
+        error.contains(&format!("input 0 script pubkey {limit_text}")),
+        "{error}"
+    );
+
+    let mut fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    fixture.envelope.inputs[0].redeem_script_hex = Some(over_limit);
+    let error = limit_error(sign_signing_envelope(&fixture.envelope, &fixture.wifs[0]));
+    assert!(
+        error.contains(&format!("input 0 redeem script {limit_text}")),
+        "{error}"
+    );
+}
+
+#[test]
+fn combine_rejects_more_envelopes_than_the_limit() {
+    let signed = sign_signing_envelope(&p2pkh_envelope(), &parity_wif()).unwrap();
+
+    let at_limit = vec![signed.clone(); limits::MAX_ENVELOPES_PER_COMBINE];
+    let combined = combine_signing_envelopes(&at_limit).unwrap();
+    assert_eq!(combined.signatures.len(), 1);
+
+    let over_limit = vec![signed; limits::MAX_ENVELOPES_PER_COMBINE + 1];
+    let error = limit_error(combine_signing_envelopes(&over_limit));
+    assert!(
+        error.contains("combine request has 65 signing envelopes, which exceeds the limit of 64"),
+        "{error}"
+    );
+}
+
+#[test]
+fn combine_rejects_a_result_with_more_signatures_than_its_inputs_allow() {
+    let signed = sign_signing_envelope(&p2pkh_envelope(), &parity_wif()).unwrap();
+    let signature = signed.signatures[0].clone();
+    // Hex is case-insensitive, so upper-casing one letter of the signature hex
+    // gives an entry that still verifies but is a different string, which
+    // combining keeps as a separate signature.
+    let letter_positions = signature
+        .signature_hex
+        .char_indices()
+        .filter(|(_, character)| character.is_ascii_lowercase())
+        .map(|(position, _)| position)
+        .take(limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        letter_positions.len(),
+        limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT,
+        "the fixture signature needs at least 16 hex letters"
+    );
+    let mut envelopes = vec![signed.clone()];
+    for position in letter_positions {
+        let mut variant = signature.clone();
+        let upper = signature.signature_hex[position..=position].to_ascii_uppercase();
+        variant
+            .signature_hex
+            .replace_range(position..=position, &upper);
+        let mut envelope = signed.clone();
+        envelope.signatures = vec![variant];
+        envelopes.push(envelope);
+    }
+
+    // Sixteen distinct entries for the single input are within the limit...
+    let combined = combine_signing_envelopes(&envelopes[..16]).unwrap();
+    assert_eq!(combined.signatures.len(), 16);
+    // ...the seventeenth is not.
+    let error = limit_error(combine_signing_envelopes(&envelopes));
+    assert!(
+        error.contains(
+            "signing envelope has 17 signatures, which exceeds the limit of 16 (16 per transaction input)"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn derivation_deeper_than_bip32_allows_is_an_error_not_a_panic() {
+    // Characterization test: the bitcoin crate stops at depth 255, so the SDK
+    // needs no limit of its own. The account key sits at depth 3.
+    let account =
+        account_xpriv_from_mnemonic(PHRASE, None, Language::English, Network::Mainnet, 0).unwrap();
+    let deepest = format!("m/{}", vec!["0"; 252].join("/"));
+    derive_path_from_xpriv(&account.xpriv, &deepest).unwrap();
+    let too_deep = format!("m/{}", vec!["0"; 253].join("/"));
+    let error = limit_error(derive_path_from_xpriv(&account.xpriv, &too_deep));
+    assert!(error.contains("depth 256"), "{error}");
+    let error = limit_error(derive_address_from_xpub(&account.xpub, &too_deep));
+    assert!(error.contains("depth 256"), "{error}");
+}

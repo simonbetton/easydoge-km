@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::encoding::hash160_bytes;
 use crate::keys::secret_key_from_wif;
 use crate::multisig::MAX_P2SH_REDEEM_SCRIPT_BYTES;
-use crate::{Error, Network, Result};
+use crate::{limits, Error, Network, Result};
 
 const SIGHASH_ALL: u32 = 0x01;
 const SIGHASH_NONE: u32 = 0x02;
@@ -177,6 +177,12 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
 }
 
 pub fn combine_signing_envelopes(envelopes: &[SigningEnvelope]) -> Result<SigningEnvelope> {
+    limits::check_count(
+        format_args!("combine request"),
+        envelopes.len(),
+        "signing envelopes",
+        limits::MAX_ENVELOPES_PER_COMBINE,
+    )?;
     let first = envelopes
         .first()
         .ok_or_else(|| Error::InvalidTransaction("at least one envelope is required".to_owned()))?;
@@ -204,6 +210,8 @@ pub fn combine_signing_envelopes(envelopes: &[SigningEnvelope]) -> Result<Signin
             }
         }
     }
+    // Keep the result acceptable to the next sign, combine, or finalize call.
+    enforce_envelope_limits(&combined, &tx)?;
     Ok(combined)
 }
 
@@ -361,6 +369,7 @@ fn validate_envelope<'a>(
     tx: &Transaction,
     coverage: DescriptorCoverage,
 ) -> Result<Vec<ValidatedInput<'a>>> {
+    enforce_envelope_limits(envelope, tx)?;
     if envelope.version != 1 {
         return Err(Error::InvalidTransaction(format!(
             "unsupported signing envelope version {}",
@@ -524,7 +533,43 @@ fn validate_envelope<'a>(
     Ok(validated)
 }
 
+/// Resource limits from `crate::limits` for one envelope. Runs before any
+/// script parsing, signature hashing, or signature verification.
+fn enforce_envelope_limits(envelope: &SigningEnvelope, tx: &Transaction) -> Result<()> {
+    let max_signatures = tx
+        .input
+        .len()
+        .saturating_mul(limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT);
+    if envelope.signatures.len() > max_signatures {
+        return Err(Error::InvalidTransaction(format!(
+            "signing envelope has {} signatures, which exceeds the limit of {max_signatures} ({} per transaction input)",
+            envelope.signatures.len(),
+            limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT
+        )));
+    }
+    for input in &envelope.inputs {
+        limits::check_hex_len(
+            format_args!("input {} script pubkey", input.input_index),
+            &input.script_pubkey_hex,
+            limits::MAX_SCRIPT_BYTES,
+        )?;
+        if let Some(redeem_script_hex) = input.redeem_script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("input {} redeem script", input.input_index),
+                redeem_script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn parse_transaction(hex_value: &str) -> Result<Transaction> {
+    limits::check_hex_len(
+        format_args!("unsigned transaction"),
+        hex_value,
+        limits::MAX_TRANSACTION_BYTES,
+    )?;
     let bytes = hex::decode(hex_value)
         .map_err(|err| Error::InvalidTransaction(format!("invalid tx hex: {err}")))?;
     deserialize(&bytes).map_err(|err| Error::InvalidTransaction(err.to_string()))

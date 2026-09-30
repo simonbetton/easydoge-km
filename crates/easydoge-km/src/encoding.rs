@@ -1,7 +1,7 @@
 use bitcoin::hashes::{hash160, Hash};
 use sha2::{Digest, Sha256};
 
-use crate::{Error, Network, Result};
+use crate::{limits, Error, Network, Result};
 
 pub(crate) fn hash160_bytes(bytes: &[u8]) -> [u8; 20] {
     hash160::Hash::hash(bytes).to_byte_array()
@@ -15,6 +15,15 @@ pub(crate) fn base58check_encode(prefix: u8, payload: &[u8]) -> String {
 }
 
 pub(crate) fn base58check_decode(value: &str) -> Result<Vec<u8>> {
+    // Base58 decoding is quadratic in the input length, so refuse anything
+    // longer than the longest value the SDK accepts before decoding.
+    if value.len() > limits::MAX_BASE58CHECK_CHARS {
+        return Err(Error::InvalidKey(format!(
+            "base58check value has {} characters, which exceeds the limit of {}",
+            value.len(),
+            limits::MAX_BASE58CHECK_CHARS
+        )));
+    }
     bs58::decode(value)
         .with_check(None)
         .into_vec()

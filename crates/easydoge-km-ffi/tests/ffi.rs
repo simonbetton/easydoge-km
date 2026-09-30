@@ -266,3 +266,24 @@ fn ffi_secret_records_redact_debug_output() {
     assert!(rendered[2].1.contains("m/44'/3'/0'"));
     assert!(rendered[0].1.contains("English"));
 }
+
+#[test]
+fn ffi_surface_reports_core_resource_limits() {
+    // The FFI adds no limits of its own: it forwards the core's error text.
+    let envelope = SigningEnvelope {
+        version: 1,
+        network: Network::Mainnet,
+        unsigned_tx_hex: "zz".repeat(100_000),
+        inputs: vec![],
+        signatures: vec![],
+    };
+    let Err(error) = finalize_signing_envelope(envelope) else {
+        panic!("expected the core transaction size limit to reject the envelope");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("which exceeds the limit of 199998 (99999 bytes)"),
+        "{error}"
+    );
+}

@@ -19,7 +19,7 @@ use crate::signing::{
     sign_signing_envelope, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
     SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
 };
-use crate::{Error, Network, Result};
+use crate::{limits, Error, Network, Result};
 
 const DEFAULT_SEQUENCE: u32 = 0xffff_ffff;
 const DEFAULT_SIGHASH_ALL: u32 = 1;
@@ -326,6 +326,7 @@ pub fn compose_and_sign_transaction(
 }
 
 fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
+    enforce_request_limits(request)?;
     if request.utxos.is_empty() {
         return Err(Error::InvalidTransaction(
             "at least one UTXO is required".to_owned(),
@@ -348,6 +349,54 @@ fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
     }
     validate_sighash_type(request.options.sighash_type)?;
     reject_duplicate_outpoints(&request.utxos)?;
+    Ok(())
+}
+
+/// Resource limits from `crate::limits`. Runs before any parsing, key
+/// derivation, or Coin Selection, so an oversized request costs one pass over
+/// its collections and nothing else.
+fn enforce_request_limits(request: &ComposeTransactionRequest) -> Result<()> {
+    limits::check_count(
+        format_args!("request"),
+        request.utxos.len(),
+        "UTXOs",
+        limits::MAX_REQUEST_UTXOS,
+    )?;
+    limits::check_count(
+        format_args!("request"),
+        request.outputs.len(),
+        "outputs",
+        limits::MAX_REQUEST_OUTPUTS,
+    )?;
+    for (index, utxo) in request.utxos.iter().enumerate() {
+        limits::check_count(
+            format_args!("UTXO at index {index}"),
+            utxo.signers.len(),
+            "signers",
+            limits::MAX_SIGNERS_PER_UTXO,
+        )?;
+        limits::check_hex_len(
+            format_args!("UTXO at index {index} script pubkey"),
+            &utxo.script_pubkey_hex,
+            limits::MAX_SCRIPT_BYTES,
+        )?;
+        if let Some(redeem_script_hex) = utxo.redeem_script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("UTXO at index {index} redeem script"),
+                redeem_script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
+    for (index, output) in request.outputs.iter().enumerate() {
+        if let Some(script_hex) = output.script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("output at index {index} script"),
+                script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -820,6 +869,12 @@ fn estimate_size_bytes(
     }
     if let Some(script) = change_script {
         size += 8 + varint_len(script.len()) + script.len();
+    }
+    if size > limits::MAX_TRANSACTION_BYTES {
+        return Err(Error::InvalidTransaction(format!(
+            "estimated transaction size is {size} bytes, which exceeds the limit of {} bytes",
+            limits::MAX_TRANSACTION_BYTES
+        )));
     }
     Ok(size as u64)
 }
