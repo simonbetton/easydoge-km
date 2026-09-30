@@ -111,6 +111,7 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [SECURITY.md](SECURITY.
 - UniFFI Swift and Kotlin binding generation, with a check that the committed generated sources are current
 - Swift package tests
 - Expo TypeScript checks
+- Native build input pin checks (Gradle distribution checksum, no dynamic dependency versions)
 - Android/Kotlin Gradle tests
 
 The shell syntax check covers every script under `scripts/`. Gradle tests run when the wrapper is executable. The suite regenerates the committed binding sources and fails if they differ from the git index, so stage regenerated bindings after an intentional FFI or UniFFI change. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.

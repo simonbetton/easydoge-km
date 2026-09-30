@@ -46,6 +46,21 @@ Review the lockfile diff; it should touch only that package. Do not add a `pnpm.
 
 Dependabot version updates watch the harness's direct dependencies only. Advisories in transitive dependencies surface through this audit, or through Dependabot alerts and security updates when those are enabled in the repository settings.
 
+## Pinned Build Inputs
+
+`bindings/kotlin/gradlew` is a repository-specific launcher, not the stock Gradle wrapper, and no `gradle-wrapper.jar` is committed. It downloads the distribution named by `distributionUrl` in `bindings/kotlin/gradle/wrapper/gradle-wrapper.properties`, compares its SHA-256 with `distributionSha256Sum` before extracting anything, and refuses to run when the checksum is missing or different. It needs `curl`, `unzip`, and `sha256sum` or `shasum`. Verified distributions are extracted under `<Gradle user home>/wrapper/dists/<distribution>/sha256-<checksum>/`; a tree extracted by an older launcher is never reused and can be deleted once no checkout uses it.
+
+`scripts/check-native-build-pins.sh`, which `verify.sh` runs, tests the launcher offline against a fake distribution (it needs `zip`) and rejects dynamic dependency versions such as `+` in the Kotlin and Expo Android build files. The Expo Android module depends on the host build's `:expo-modules-core` project, so the app's package lockfile decides its version.
+
+To change the Gradle version:
+
+1. Pick a final Gradle release supported by the Android Gradle plugin version in `bindings/kotlin/build.gradle.kts`.
+2. Fetch the published checksum with `curl -fsSL https://services.gradle.org/distributions/gradle-<version>-bin.zip.sha256` and confirm the same value is listed for that version on <https://gradle.org/release-checksums/>.
+3. Update `distributionUrl` and `distributionSha256Sum` together in one commit. Do not run `gradle wrapper` and do not merge a Dependabot `gradle-wrapper` pull request: both replace the launcher with the stock script, which needs the uncommitted jar. Dependabot is configured to ignore that dependency.
+4. Run `./scripts/verify.sh`.
+
+Only the Gradle distribution is pinned by checksum. Gradle plugins and Maven libraries are pinned by exact version without checksum verification, `rust-toolchain.toml` tracks the stable channel, and CI actions are referenced by tag.
+
 ## Versioning
 
 Update all package versions together:

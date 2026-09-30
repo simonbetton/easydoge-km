@@ -32,6 +32,7 @@ This regenerates the committed UniFFI sources and fails if the result differs fr
 - Keep secret material out of logs, test names, panic messages, screenshots, and issue comments.
 - Prefer deterministic test vectors under `test-vectors/` for parity behavior.
 - Update `docs/API.md`, `docs/SECURITY_MODEL.md`, and `CHANGELOG.md` when public behavior changes.
+- Keep native build inputs pinned. Do not replace `bindings/kotlin/gradlew` with the stock Gradle wrapper, commit `gradle-wrapper.jar`, or use dynamic dependency versions (`+`, `latest.release`, snapshots) in Gradle build files. Change the Gradle version with the procedure in [docs/RELEASE.md](docs/RELEASE.md#pinned-build-inputs).
 
 ## Pull Request Checklist
 
