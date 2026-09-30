@@ -108,12 +108,12 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [SECURITY.md](SECURITY.
 - Clippy with warnings denied
 - Rust workspace build
 - Rust docs build
-- UniFFI Swift and Kotlin binding generation
+- UniFFI Swift and Kotlin binding generation, with a check that the committed generated sources are current
 - Swift package tests
 - Expo TypeScript checks
 - Android/Kotlin Gradle tests
 
-The shell syntax command currently checks `scripts/build-android-native-libs.sh`, the first file expanded by `scripts/*.sh`; it does not loop over every script. Gradle tests run when the wrapper is executable. The suite regenerates committed binding sources, so inspect the diff afterward. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.
+The shell syntax check covers every script under `scripts/`. Gradle tests run when the wrapper is executable. The suite regenerates the committed binding sources and fails if they differ from the git index, so stage regenerated bindings after an intentional FFI or UniFFI change. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.
 
 ## Releasing
 

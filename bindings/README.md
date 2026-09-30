@@ -17,6 +17,8 @@ Regenerate UniFFI sources with:
 
 Scratch output is written to `bindings/generated/`. The package surfaces under `swift/` and `kotlin/` include the generated source files that are needed by consumers.
 
+`./scripts/verify.sh` runs the generator with `--check`, which fails when a regenerated file is untracked or differs from the git index. After changing the FFI surface or the UniFFI version, regenerate, review the diff, and stage the files listed by `./scripts/generate-bindings.sh --print-committed-paths`. The generator uses the UniFFI version recorded in `Cargo.lock`.
+
 ## Integration status
 
 - The Swift package links `easydoge_km_ffi` using the workspace's `target/debug` path. Build the host library before local tests. An iOS app needs a library built for its device/simulator target and appropriate linking; the XCFramework helper does not automatically install a SwiftPM binary target.

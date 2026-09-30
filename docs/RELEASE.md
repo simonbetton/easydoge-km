@@ -21,9 +21,9 @@ Run:
 ./scripts/verify.sh
 ```
 
-Run the full suite on macOS. It checks required repository files/metadata, Rust formatting and tests, bitcoinjs cross-checks, Clippy, Rust builds/docs, generated UniFFI bindings, Swift tests, Expo TypeScript, and Kotlin JVM tests when the Gradle wrapper is executable. It regenerates committed binding sources, so inspect the resulting diff.
+Run the full suite on macOS. It checks required repository files/metadata, Rust formatting and tests, bitcoinjs cross-checks, Clippy, Rust builds/docs, generated UniFFI bindings, Swift tests, Expo TypeScript, and Kotlin JVM tests when the Gradle wrapper is executable. It syntax-checks every script under `scripts/`, regenerates the committed binding sources, and fails if they differ from the git index (what is staged; in a clean checkout, the commit itself).
 
-It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. Its shell syntax command checks only the first expanded script; check each script separately when changing release helpers. A passing suite is not a security audit or proof of reproducible release binaries.
+It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. A passing suite is not a security audit or proof of reproducible release binaries.
 
 ## Dependency Advisories
 
@@ -73,6 +73,8 @@ Generated scratch output goes under `bindings/generated/`. The committed package
 - `bindings/swift/Sources/easydoge_km_ffiFFI`
 - `bindings/kotlin/easydoge-km/src/main/java/uniffi/easydoge_km_ffi`
 
+The generator takes the UniFFI version from `Cargo.lock`, so a UniFFI upgrade needs no script edit. `./scripts/generate-bindings.sh --check` (run by `verify.sh`) regenerates and then fails if a committed generated file is untracked or differs from the git index; `--print-committed-paths` lists those files. A dependency update that changes UniFFI's output, including a Dependabot pull request, fails this check until the regenerated bindings are committed on that branch. Outside a git work tree the check is skipped with a notice.
+
 ## Native Artifacts
 
 For source releases, consumers can build native libraries locally. Binary releases should publish:
@@ -99,7 +101,7 @@ Before distributing mobile packages, complete and verify their native integratio
 ## Publishing Order
 
 1. Choose a version, update manifests/internal dependencies and release notes, review the security limitations, and check the [dependency advisories](#dependency-advisories).
-2. Run `./scripts/package-release.sh`. It runs the full verification suite and `cargo package -p easydoge-km --allow-dirty`; it does not publish. Inspect binding diffs and ensure the release checkout is clean despite the helper's `--allow-dirty` flag.
+2. Commit the release changes, then run `./scripts/package-release.sh` from that checkout. It refuses to start unless `git status --porcelain` is empty (no staged, unstaged, or untracked files), runs the full verification suite including the generated-binding identity check, confirms verification left the checkout clean, and runs `cargo package -p easydoge-km` without `--allow-dirty`; it does not publish.
 3. Complete the mobile integration described above, build target artifacts, and test the consuming iOS, Android, and Expo apps, including storage/authentication and recovery behavior.
 4. Build Expo JavaScript and declarations (`pnpm --dir bindings/expo install`, then `pnpm --dir bindings/expo run build`) and inspect the npm package contents. The workspace typecheck uses `--noEmit`, and the package has no automatic pre-publish build script.
 5. Create a signed git tag for the verified release commit. If using the current Expo podspec, its source tag is the bare version (for example `0.1.0`); keep the tag and podspec consistent.

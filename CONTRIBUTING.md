@@ -21,7 +21,7 @@ Then run:
 ./scripts/verify.sh
 ```
 
-This regenerates the committed UniFFI sources. Review any resulting diff. Expo verification is TypeScript-only; the native Expo modules and device storage/authentication flows require separate integration tests. Kotlin tests use the host Rust library, not an Android device. To syntax-check every shell script, run `bash -c 'for script in scripts/*.sh; do bash -n "$script" || exit; done'`; the existing `bash -n scripts/*.sh` invocation checks only the first script.
+This regenerates the committed UniFFI sources and fails if the result differs from what is staged or committed. After an intentional change to the FFI surface (`crates/easydoge-km-ffi/src/lib.rs`) or to the UniFFI version, run `./scripts/generate-bindings.sh`, review the diff, and stage the regenerated files with `git add -- $(./scripts/generate-bindings.sh --print-committed-paths)` before re-running the suite. Expo verification is TypeScript-only; the native Expo modules and device storage/authentication flows require separate integration tests. Kotlin tests use the host Rust library, not an Android device. The suite syntax-checks every script under `scripts/`.
 
 ## Development Rules
 
@@ -36,6 +36,7 @@ This regenerates the committed UniFFI sources. Review any resulting diff. Expo v
 ## Pull Request Checklist
 
 - `./scripts/verify.sh` passes locally.
+- Regenerated UniFFI sources are committed whenever the FFI surface or the UniFFI version changes.
 - New public behavior has tests.
 - The README or docs describe any new public API.
 - No generated build outputs, local caches, or native binaries are included unless part of a documented release artifact.

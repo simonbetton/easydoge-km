@@ -21,6 +21,8 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - Upgraded the Expo TypeScript typecheck to 7.0.2 and pinned `rootDir` to `src` so emit still lands at `build/index.js`.
 - **Breaking (Kotlin)**: `AndroidKeystoreWalletSecretStore` no longer has a no-argument constructor. Use `AndroidKeystoreWalletSecretStore.persistent(context)` in apps or `.inMemory()` in tests. The Expo Android module now uses the persistent variant.
 - Refreshed the bitcoinjs cross-check harness lockfile so its transitive `valibot` dependency resolves to a release patched for GHSA-5qjj-4xww-7phc (moderate; verification tooling only, no shipped artifact was affected), and added the harness to the Dependabot configuration.
+- `scripts/verify.sh` now fails when the regenerated UniFFI Swift/Kotlin sources differ from the git index and syntax-checks every script under `scripts/` instead of only the first. `scripts/generate-bindings.sh` reads the UniFFI version from `Cargo.lock` and gained `--check` and `--print-committed-paths`. A UniFFI upgrade must commit the regenerated bindings.
+- `scripts/package-release.sh` refuses to run from a checkout with uncommitted or untracked files and no longer passes `--allow-dirty` to `cargo package`.
 
 ### Fixed
 
