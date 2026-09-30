@@ -80,8 +80,8 @@ packages:
     resolution: {integrity: sha512-9vqDWmoSXOoi+K14zNaf6LBV51Q8MayF0/IiQs3GlygIKUYtog603e6virExkjjFosfJUBI4LhbQK1iq8IG11A==}
     engines: {node: '>=14.0.0'}
 
-  valibot@1.4.1:
-    resolution: {integrity: sha512-klCmFTz2jeDluy9RwX+F884TCiogtdBJ/YaxSx1EOBYXa3NXNWj8kR1jjN8rzluwojJVWWaHJ4r1U5LfICnM3g==}
+  valibot@1.5.0:
+    resolution: {integrity: sha512-nil6AkP2TChWL43Z5uJ6GTxX01CUA+g8LWUM+N/rB9NBbkUMaUsi9PUNzlUPgoKASgmx9f7eGOYpJ04/fSa6FQ==}
     peerDependencies:
       typescript: '>=5'
     peerDependenciesMeta:
@@ -114,7 +114,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
       uint8array-tools: 0.0.8
-      valibot: 1.4.1
+      valibot: 1.5.0
       wif: 5.0.0
     transitivePeerDependencies:
       - typescript
@@ -130,7 +130,7 @@ snapshots:
       bip174: 3.0.0
       bs58check: 4.0.0
       uint8array-tools: 0.0.9
-      valibot: 1.4.1
+      valibot: 1.5.0
       varuint-bitcoin: 2.0.0
     transitivePeerDependencies:
       - typescript
@@ -147,7 +147,7 @@ snapshots:
   ecpair@3.0.1:
     dependencies:
       uint8array-tools: 0.0.8
-      valibot: 1.4.1
+      valibot: 1.5.0
       wif: 5.0.0
     transitivePeerDependencies:
       - typescript
@@ -162,7 +162,7 @@ snapshots:
 
   uint8array-tools@0.0.9: {}
 
-  valibot@1.4.1: {}
+  valibot@1.5.0: {}
 
   varuint-bitcoin@2.0.0:
     dependencies:
