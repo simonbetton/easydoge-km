@@ -38,7 +38,7 @@ Swift and Kotlin expose typed UniFFI records directly through their native packa
 
 The non-negative rule applies to Expo inputs, including transaction `version` (0 through 2147483647); Rust/UniFFI use a signed `i32` for that field. These conversion rules are unit-tested in the native wrapper packages, but the Expo bridge itself is not exercised by workspace tests. The native modules validate `network`, `language`, and `protection` strings at runtime: only the exact lowercase names in the TypeScript unions are accepted. An unrecognized string (including a different letter case), or a missing `network` inside an `Xpriv`, `Xpub`, signing envelope, or compose request, rejects the promise with `Invalid <field>: expected one of …` instead of falling back to a default; non-string values are rejected as well. The message lists the allowed names and never repeats the rejected value. `language` may be omitted only where the TypeScript signature marks it optional (`generateMnemonic` options, `validateMnemonic`, `mnemonicToSeedHex`); omission selects English.
 
-There is also a known Android output mismatch: `inspectXpriv`/`inspectXpub` convert unsigned `childNumber` to a signed Kotlin `Int`. Hardened indices can therefore appear negative in Expo (for example, 2147483648 becomes -2147483648). The Swift bridge preserves the unsigned value. The table indicates which operations are exposed, not complete wire-level parity.
+`inspectXpriv`/`inspectXpub` return `childNumber` as the unsigned BIP32 index on both platforms, so a hardened child is 2147483648 or greater (account `0'` is 2147483648). The table indicates which operations are exposed, not complete wire-level parity.
 
 ## Seed and Storage Limitations
 

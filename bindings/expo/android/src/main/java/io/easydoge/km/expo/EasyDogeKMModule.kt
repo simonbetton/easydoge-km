@@ -229,7 +229,7 @@ private fun uniffi.easydoge_km_ffi.ExtendedKeyInfo.toMap(): Map<String, Any?> =
         "network" to network.raw(),
         "depth" to depth.toInt(),
         "parentFingerprintHex" to parentFingerprintHex,
-        "childNumber" to childNumber.toInt(),
+        "childNumber" to childNumber.toLong(),
         "publicKeyHex" to publicKeyHex,
         "privateKeyRedacted" to privateKeyRedacted,
     )
