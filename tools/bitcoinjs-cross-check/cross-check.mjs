@@ -77,6 +77,7 @@ async function main() {
   const multisigCases = input.multisig_cases.map((multisigCase) =>
     emitMultisigCase(multisigCase, mnemonicById, bip44ById),
   );
+  const wifCases = input.wif_cases.map((wifCase) => emitWifCase(wifCase));
 
   const output = {
     version: input.version,
@@ -85,6 +86,7 @@ async function main() {
     message_cases: messageCases,
     transaction_cases: transactionCases,
     multisig_cases: multisigCases,
+    wif_cases: wifCases,
   };
 
   await mkdir(path.dirname(outputPath), { recursive: true });
@@ -278,6 +280,55 @@ function emitMultisigCase(multisigCase, mnemonicById, bip44ById) {
   };
 }
 
+function emitWifCase(wifCase) {
+  const network = networkFor(wifCase.network);
+  const wif = ECPair.fromPrivateKey(Buffer.from(wifCase.private_key_hex, 'hex'), {
+    compressed: wifCase.compressed,
+    network,
+  }).toWIF();
+  const wifImport = ECPair.fromWIF(wif, network);
+  const publicKey = Buffer.from(wifImport.publicKey);
+  const messageSignature = signDogecoinMessage(wif, network, wifCase.message);
+  const scriptPubkey = p2pkhScriptPubkey(publicKey);
+  const tx = bitcoin.Transaction.fromHex(wifCase.unsigned_tx_hex);
+  const sighash = tx.hashForSignature(wifCase.input_index, scriptPubkey, wifCase.sighash_type);
+  const signature = ecc.sign(sighash, Buffer.from(wifImport.privateKey));
+  const signatureWithHashType = bitcoin.script.signature.encode(
+    Buffer.from(signature),
+    wifCase.sighash_type,
+  );
+  tx.setInputScript(
+    wifCase.input_index,
+    bitcoin.script.compile([signatureWithHashType, publicKey]),
+  );
+
+  return {
+    id: wifCase.id,
+    network: wifCase.network,
+    compressed: wifCase.compressed,
+    wif,
+    wif_import: {
+      public_key_hex: toHex(publicKey),
+      address: p2pkhAddress(publicKey, network),
+      compressed: wifImport.compressed,
+    },
+    message: wifCase.message,
+    message_address: messageSignature.address,
+    signature_base64: messageSignature.signature_base64,
+    verified: verifyDogecoinMessage(
+      network,
+      messageSignature.address,
+      messageSignature.signature_base64,
+      wifCase.message,
+    ),
+    unsigned_tx_hex: wifCase.unsigned_tx_hex,
+    input_index: wifCase.input_index,
+    sighash_type: wifCase.sighash_type,
+    script_pubkey_hex: toHex(scriptPubkey),
+    signed_tx_hex: tx.toHex(),
+  };
+}
+
 function accountForCase(caseId, mnemonicById, bip44ById) {
   const bip44Case = bip44ById.get(caseId);
   if (!bip44Case) {
@@ -303,7 +354,7 @@ function signDogecoinMessage(wif, network, message) {
   const digest = dogecoinMessageDigest(message);
   const { signature, recoveryId } = ecc.signRecoverable(digest, Buffer.from(keyPair.privateKey));
   const compact = Buffer.alloc(65);
-  compact[0] = 27 + 4 + recoveryId;
+  compact[0] = 27 + (keyPair.compressed ? 4 : 0) + recoveryId;
   Buffer.from(signature).copy(compact, 1);
   return {
     address: p2pkhAddress(keyPair.publicKey, network),
@@ -316,9 +367,14 @@ function verifyDogecoinMessage(network, address, signatureBase64, message) {
   if (compact.length !== 65) {
     return false;
   }
-  const recoveryId = (compact[0] - 27) & 0x03;
+  const flags = compact[0] - 27;
+  if (flags < 0 || flags > 7) {
+    return false;
+  }
+  const recoveryId = flags & 0x03;
+  const compressed = (flags & 0x04) !== 0;
   const digest = dogecoinMessageDigest(message);
-  const publicKey = ecc.recover(digest, compact.subarray(1), recoveryId, true);
+  const publicKey = ecc.recover(digest, compact.subarray(1), recoveryId, compressed);
   return publicKey ? p2pkhAddress(publicKey, network) === address : false;
 }
 

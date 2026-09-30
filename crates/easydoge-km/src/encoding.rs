@@ -30,11 +30,11 @@ pub(crate) fn base58check_decode(value: &str) -> Result<Vec<u8>> {
         .map_err(|err| Error::InvalidKey(err.to_string()))
 }
 
-pub(crate) fn p2pkh_address(network: Network, compressed_public_key: &[u8]) -> String {
-    base58check_encode(
-        network.prefixes().p2pkh,
-        &hash160_bytes(compressed_public_key),
-    )
+/// Encodes the P2PKH address for a serialized public key. The caller chooses
+/// the serialization (33-byte compressed or 65-byte uncompressed); the two
+/// forms of one key hash to different addresses.
+pub(crate) fn p2pkh_address(network: Network, public_key_bytes: &[u8]) -> String {
+    base58check_encode(network.prefixes().p2pkh, &hash160_bytes(public_key_bytes))
 }
 
 pub(crate) fn p2sh_address(network: Network, redeem_script: &[u8]) -> String {

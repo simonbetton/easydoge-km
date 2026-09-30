@@ -13,11 +13,12 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::encoding::{base58check_decode, hash160_bytes, wif};
-use crate::keys::{decode_xpriv, derive_path_from_xpriv, secret_key_from_wif, Xpriv};
+use crate::keys::{decode_xpriv, derive_path_from_xpriv, WifKey, Xpriv};
 use crate::signing::{
     finalize_signing_envelope, multisig_metadata, p2pkh_pubkey_hash, parse_multisig_redeem_script,
     sign_signing_envelope, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
     SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
+    UNCOMPRESSED_MULTISIG_UNSUPPORTED,
 };
 use crate::{limits, Error, Network, Result};
 
@@ -26,6 +27,7 @@ const DEFAULT_SIGHASH_ALL: u32 = 1;
 const OP_RETURN_STANDARD_DATA_LIMIT_BYTES: usize = 80;
 const MAX_SIGNATURE_PUSH_BYTES: usize = 73;
 const COMPRESSED_PUBLIC_KEY_BYTES: usize = 33;
+const UNCOMPRESSED_PUBLIC_KEY_BYTES: usize = 65;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComposeTransactionRequest {
@@ -226,8 +228,11 @@ struct FundingResult {
 }
 
 struct ResolvedSigner {
+    /// The public key in the signer's own serialization: 65 bytes for an
+    /// uncompressed WIF, 33 bytes for a compressed WIF or an xpriv derivation.
+    public_key_bytes: Vec<u8>,
     public_key_hex: String,
-    public_key: PublicKey,
+    compressed: bool,
     wif: String,
 }
 
@@ -602,7 +607,7 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
             indices.sort_by_cached_key(|index| {
                 let utxo = &request.utxos[*index];
                 (
-                    Reverse(effective_value_scaled(utxo, fee_rate)),
+                    Reverse(effective_value_scaled(request.network, utxo, fee_rate)),
                     utxo.txid.clone(),
                     utxo.vout,
                 )
@@ -641,8 +646,12 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
 /// descending order of this value reaches a funded selection with the fewest
 /// inputs. A UTXO whose input size cannot be estimated is ranked by its raw
 /// value; its error surfaces when the funding loop reaches it.
-fn effective_value_scaled(utxo: &SpendableUtxo, fee_rate_koinu_per_kb: u64) -> i128 {
-    let input_size = estimated_input_size(utxo).unwrap_or(0);
+fn effective_value_scaled(
+    network: Network,
+    utxo: &SpendableUtxo,
+    fee_rate_koinu_per_kb: u64,
+) -> i128 {
+    let input_size = estimated_input_size(network, utxo).unwrap_or(0);
     let input_size = i128::try_from(input_size).unwrap_or(i128::MAX);
     i128::from(utxo.previous_output_value_koinu)
         .saturating_mul(1000)
@@ -791,12 +800,13 @@ fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigne
             wif(network, &child_key.private_key.secret_bytes(), true)
         }
     };
-    let secret_key = secret_key_from_wif(&wif_value, network)?;
+    let key = WifKey::parse(&wif_value, network)?;
     let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let public_key_bytes = key.public_key_bytes(&secp);
     Ok(ResolvedSigner {
-        public_key_hex: hex::encode(public_key.serialize()),
-        public_key,
+        public_key_hex: hex::encode(&public_key_bytes),
+        public_key_bytes,
+        compressed: key.compressed,
         wif: wif_value,
     })
 }
@@ -804,7 +814,7 @@ fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigne
 fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> Result<()> {
     match utxo.kind {
         SigningInputKind::P2pkh => {
-            let expected = p2pkh_script_pubkey(&hash160_bytes(&signer.public_key.serialize()));
+            let expected = p2pkh_script_pubkey(&hash160_bytes(&signer.public_key_bytes));
             if hex::encode(expected.as_bytes()) != utxo.script_pubkey_hex.to_ascii_lowercase() {
                 return Err(Error::InvalidKey(format!(
                     "signer public key does not match P2PKH UTXO {}:{}",
@@ -813,6 +823,12 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
             }
         }
         SigningInputKind::P2shMultisig => {
+            if !signer.compressed {
+                return Err(Error::Unsupported(format!(
+                    "{UNCOMPRESSED_MULTISIG_UNSUPPORTED} (UTXO {}:{})",
+                    utxo.txid, utxo.vout
+                )));
+            }
             if !utxo.multisig_public_keys_hex.is_empty()
                 && !utxo
                     .multisig_public_keys_hex
@@ -833,7 +849,7 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
             if !redeem_script
                 .as_bytes()
                 .windows(COMPRESSED_PUBLIC_KEY_BYTES)
-                .any(|window| window == signer.public_key.serialize())
+                .any(|window| window == signer.public_key_bytes.as_slice())
             {
                 return Err(Error::InvalidKey(format!(
                     "signer public key is not in redeem script for UTXO {}:{}",
@@ -893,7 +909,7 @@ fn estimate_size_bytes(
     let output_count = output_script_hexes.len() + usize::from(change_script.is_some());
     let mut size = 4 + varint_len(input_count) + varint_len(output_count) + 4;
     for index in selected_indices {
-        size += estimated_input_size(&request.utxos[*index])?;
+        size += estimated_input_size(request.network, &request.utxos[*index])?;
     }
     for script_hex in output_script_hexes {
         let script_len = hex::decode(script_hex)
@@ -913,9 +929,11 @@ fn estimate_size_bytes(
     Ok(size as u64)
 }
 
-fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
+fn estimated_input_size(network: Network, utxo: &SpendableUtxo) -> Result<usize> {
     let script_sig_len = match utxo.kind {
-        SigningInputKind::P2pkh => 1 + MAX_SIGNATURE_PUSH_BYTES + 1 + COMPRESSED_PUBLIC_KEY_BYTES,
+        SigningInputKind::P2pkh => {
+            1 + MAX_SIGNATURE_PUSH_BYTES + 1 + p2pkh_public_key_push_bytes(network, utxo)
+        }
         SigningInputKind::P2shMultisig => {
             let threshold = usize::from(redeem_script_multisig(utxo)?.threshold);
             let redeem_script_len =
@@ -931,6 +949,30 @@ fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
         }
     };
     Ok(32 + 4 + varint_len(script_sig_len) + script_sig_len + 4)
+}
+
+/// Size of the public key a P2PKH scriptSig for `utxo` will reveal.
+///
+/// A UTXO with an uncompressed WIF signer reveals the 65-byte key. Every
+/// other case is sized for a 33-byte key: xpriv-derivation signers are always
+/// compressed, and a UTXO without signers is assumed to belong to a compressed
+/// key because the builder cannot know otherwise.
+///
+/// Only the WIF payload is decoded (Base58Check, no elliptic-curve work),
+/// because the estimate runs once per candidate selection.
+fn p2pkh_public_key_push_bytes(network: Network, utxo: &SpendableUtxo) -> usize {
+    let has_uncompressed_wif_signer = utxo.signers.iter().any(|signer| {
+        signer.kind == UtxoSignerKind::Wif
+            && signer
+                .wif
+                .as_deref()
+                .is_some_and(|wif| WifKey::parse(wif, network).is_ok_and(|key| !key.compressed))
+    });
+    if has_uncompressed_wif_signer {
+        UNCOMPRESSED_PUBLIC_KEY_BYTES
+    } else {
+        COMPRESSED_PUBLIC_KEY_BYTES
+    }
 }
 
 fn fee_for_size(size_bytes: u64, fee_rate_koinu_per_kb: u64) -> Result<u64> {

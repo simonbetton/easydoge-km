@@ -9,7 +9,7 @@ use bitcoin::Transaction;
 use serde::{Deserialize, Serialize};
 
 use crate::encoding::hash160_bytes;
-use crate::keys::secret_key_from_wif;
+use crate::keys::WifKey;
 use crate::multisig::MAX_P2SH_REDEEM_SCRIPT_BYTES;
 use crate::{limits, Error, Network, Result};
 
@@ -17,6 +17,21 @@ const SIGHASH_ALL: u32 = 0x01;
 const SIGHASH_NONE: u32 = 0x02;
 const SIGHASH_SINGLE: u32 = 0x03;
 const SIGHASH_ANYONECANPAY: u32 = 0x80;
+const COMPRESSED_PUBLIC_KEY_BYTES: usize = 33;
+const UNCOMPRESSED_PUBLIC_KEY_BYTES: usize = 65;
+pub(crate) const UNCOMPRESSED_MULTISIG_UNSUPPORTED: &str =
+    "uncompressed WIF keys cannot sign P2SH multisig inputs";
+
+/// True for the two standard SEC1 public key encodings: 33 bytes starting
+/// `02`/`03`, or 65 bytes starting `04`. Hybrid encodings (`06`/`07`) parse
+/// in libsecp256k1 but are non-standard and never produced by this SDK.
+fn is_standard_public_key_encoding(bytes: &[u8]) -> bool {
+    matches!(
+        (bytes.len(), bytes.first()),
+        (COMPRESSED_PUBLIC_KEY_BYTES, Some(0x02 | 0x03))
+            | (UNCOMPRESSED_PUBLIC_KEY_BYTES, Some(0x04))
+    )
+}
 
 /// Accepts only the six consensus-defined sighash values and returns the
 /// single byte appended to a DER signature.
@@ -123,16 +138,16 @@ pub fn sign_p2pkh_transaction(
 pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<SigningEnvelope> {
     let tx = parse_transaction(&envelope.unsigned_tx_hex)?;
     let validated = validate_envelope(envelope, &tx, DescriptorCoverage::Partial)?;
-    let secret_key = secret_key_from_wif(wif, envelope.network)?;
+    let key = WifKey::parse(wif, envelope.network)?;
     let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-    let public_key_hex = hex::encode(public_key.serialize());
+    let public_key_bytes = key.public_key_bytes(&secp);
+    let public_key_hex = hex::encode(&public_key_bytes);
     let cache = SighashCache::new(&tx);
     let mut signatures = envelope.signatures.clone();
     let mut controls_any_input = false;
 
     for input in &validated {
-        if !input.controls(&public_key) {
+        if !input.controls(&public_key_bytes) {
             continue;
         }
         controls_any_input = true;
@@ -155,7 +170,7 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
             .map_err(|err| Error::Crypto(err.to_string()))?;
         let message = Message::from_digest(sighash.to_byte_array());
         let mut der = secp
-            .sign_ecdsa(&message, &secret_key)
+            .sign_ecdsa(&message, &key.secret_key)
             .serialize_der()
             .to_vec();
         der.push(input.sighash_flag);
@@ -167,6 +182,18 @@ pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<Si
     }
 
     if !controls_any_input {
+        if !key.compressed {
+            let compressed_hex =
+                hex::encode(PublicKey::from_secret_key(&secp, &key.secret_key).serialize());
+            if validated
+                .iter()
+                .any(|input| input.lists_multisig_key(&compressed_hex))
+            {
+                return Err(Error::Unsupported(
+                    UNCOMPRESSED_MULTISIG_UNSUPPORTED.to_owned(),
+                ));
+            }
+        }
         return Err(Error::InvalidKey(
             "WIF does not control any input in the signing envelope".to_owned(),
         ));
@@ -347,18 +374,24 @@ impl ValidatedInput<'_> {
         self.descriptor.input_index
     }
 
-    fn controls(&self, public_key: &PublicKey) -> bool {
+    /// Whether the key with this exact serialization can sign the input.
+    /// P2PKH commits to the hash of one serialization, so the compressed and
+    /// uncompressed forms of the same key control different scripts.
+    fn controls(&self, public_key_bytes: &[u8]) -> bool {
         match (&self.pubkey_hash, &self.multisig) {
-            (Some(hash), _) => hash160_bytes(&public_key.serialize()) == *hash,
-            (None, Some(metadata)) => {
-                let hex = hex::encode(public_key.serialize());
-                metadata
-                    .public_keys_hex
-                    .iter()
-                    .any(|key| key.eq_ignore_ascii_case(&hex))
-            }
+            (Some(hash), _) => hash160_bytes(public_key_bytes) == *hash,
+            (None, Some(_)) => self.lists_multisig_key(&hex::encode(public_key_bytes)),
             (None, None) => false,
         }
+    }
+
+    fn lists_multisig_key(&self, public_key_hex: &str) -> bool {
+        self.multisig.as_ref().is_some_and(|metadata| {
+            metadata
+                .public_keys_hex
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(public_key_hex))
+        })
     }
 }
 
@@ -492,7 +525,19 @@ fn validate_envelope<'a>(
                 "signature for input {index} has an invalid public key"
             ))
         })?;
-        if public_key_bytes.len() != 33 || !input.controls(&public_key) {
+        let encoding_supported = match input.descriptor.kind {
+            SigningInputKind::P2pkh => is_standard_public_key_encoding(&public_key_bytes),
+            SigningInputKind::P2shMultisig => {
+                public_key_bytes.len() == COMPRESSED_PUBLIC_KEY_BYTES
+                    && is_standard_public_key_encoding(&public_key_bytes)
+            }
+        };
+        if !encoding_supported {
+            return Err(Error::InvalidTransaction(format!(
+                "signature for input {index} has an unsupported public key encoding"
+            )));
+        }
+        if !input.controls(&public_key_bytes) {
             return Err(Error::InvalidTransaction(format!(
                 "signature for input {index} was made by a key that does not control the input"
             )));

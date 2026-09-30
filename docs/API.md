@@ -59,6 +59,16 @@ Mnemonic text and passphrases are NFKD-normalized before PBKDF2, as BIP39 requir
 
 Swift and Kotlin additionally expose `WalletSecretStore`; Expo exposes `storeMnemonic`, `exportMnemonic`, and `protectionLevel`. These store mnemonic text, not the optional BIP39 passphrase. Kotlin apps persist the encrypted record with `AndroidKeystoreWalletSecretStore.persistent(context)` in app-private no-backup storage, so handles survive process death. `inMemory()` is for tests and demos and does not. See [SECURITY_MODEL.md](SECURITY_MODEL.md#storage-boundaries) for authentication limits.
 
+## WIF Keys and Public Key Compression
+
+A WIF records which public key form its address uses. A compressed WIF (payload ends in `0x01`) owns the address of the 33-byte public key. An uncompressed WIF (no suffix; Dogecoin mainnet strings start with `6`, typical of older paper wallets) owns the address of the 65-byte public key. The two addresses differ, and an output locked to one cannot be spent with the other form.
+
+- `address_from_wif` reports the WIF's own form: `compressed`, `public_key_hex` (66 hex characters starting `02`/`03`, or 130 starting `04`), and the matching `address`.
+- `wif_from_xpriv` always exports compressed WIFs because BIP32-derived keys are compressed.
+- `sign_message` signs for the address of the WIF's own form. The signature header byte is 31–34 for compressed keys and 27–30 for uncompressed keys. `verify_message` accepts headers 27–34 only, reads the key form from the header, and compares against the address of that form; any other header fails with `invalid recovery header`.
+- P2PKH signing (`sign_p2pkh_transaction`, Signing Envelopes, and the Compose-and-Sign Transaction Builder) treats a WIF as controlling only the script pubkey that commits to the hash of its own public key form, and reveals that form in the scriptSig.
+- P2SH multisig uses compressed keys only. Signing a multisig input with an uncompressed WIF fails with `uncompressed WIF keys cannot sign P2SH multisig inputs`.
+
 ## Compose-and-Sign Transaction Builder
 
 `compose_and_sign_transaction` builds and funds Dogecoin legacy transactions entirely inside the Rust core, then signs every selected input for which valid signer material is supplied. Callers provide known UTXOs; the SDK does not fetch UTXOs, fetch live fees, broadcast transactions, or validate chain state.
@@ -82,7 +92,9 @@ The result reports selected and skipped inputs, input total, spend output total,
 
 A selection funds the transaction when its input total covers the spend outputs plus the fee for the transaction without a change output. What is left over becomes a change output only if, after also paying the fee for that extra output, the change is non-zero and at least `dust_threshold_koinu`. Otherwise no change output is created, the whole leftover is added to the fee, and `dust_change_folded_into_fee` is `true` when that leftover is non-zero. The builder never adds another input just to afford a change output, so the fee can exceed the rate-based fee by at most the fee for one change output plus the dust threshold.
 
-Each UTXO the builder selects is validated before it contributes to the size estimate, and signer ownership is checked before signing. P2PKH UTXOs must carry a canonical 25-byte pay-to-pubkey-hash script pubkey, and P2PKH signers must match it. P2SH multisig UTXOs must carry a redeem script of the form `m <33-byte public keys> n OP_CHECKMULTISIG` that hashes to the script pubkey. The threshold used for fee sizing, and the threshold and public keys written to a returned signing envelope (in redeem-script order), are read from that redeem script. `multisig_threshold` and `multisig_public_keys_hex` are optional cross-checks: when supplied they must agree with the redeem script, otherwise composing fails with `multisig threshold metadata does not match redeem script` or `multisig public key metadata does not match redeem script`. Signatures only count when the public key is part of the redeem script.
+Each UTXO the builder selects is validated before it contributes to the size estimate, and signer ownership is checked before signing. P2PKH UTXOs must carry a canonical 25-byte pay-to-pubkey-hash script pubkey, and P2PKH signers must match it in their own public key form (the WIF's form for WIF signers, compressed for xpriv derivations). P2SH multisig UTXOs must carry a redeem script of the form `m <33-byte public keys> n OP_CHECKMULTISIG` that hashes to the script pubkey. The threshold used for fee sizing, and the threshold and public keys written to a returned signing envelope (in redeem-script order), are read from that redeem script. `multisig_threshold` and `multisig_public_keys_hex` are optional cross-checks: when supplied they must agree with the redeem script, otherwise composing fails with `multisig threshold metadata does not match redeem script` or `multisig public key metadata does not match redeem script`. Signatures only count when the public key is part of the redeem script.
+
+For each P2PKH input the size estimate assumes a 33-byte compressed public key, or a 65-byte key when that UTXO carries an uncompressed WIF signer. A P2PKH UTXO supplied without signers is sized as compressed; if an uncompressed key later signs the returned envelope, the final transaction is 32 bytes larger per such input than `estimated_size_bytes` and pays a correspondingly lower fee rate.
 
 CLI example:
 
@@ -165,6 +177,11 @@ without verifying them because their scripts are unavailable. Finalization
 requires every transaction input to be described and verifies every signature.
 Combining requires identical version, network, unsigned transaction hex, and
 input descriptors; it merges signatures, not differing descriptor sets.
+
+Signature records carry the signing public key in `public_key_hex`: a 33-byte
+compressed key for any input, or a 65-byte uncompressed key (prefix `04`) for
+P2PKH inputs only. Hybrid encodings (prefix `06`/`07`) and other lengths are
+rejected with `unsupported public key encoding`.
 
 For P2SH multisig inputs the redeem script must be at most 520 bytes, the
 largest element a scriptSig may push; a larger script can never be spent and
@@ -257,7 +274,7 @@ Public derivation rejects hardened path components because hardened public deriv
 
 `test-vectors/parity.json` is read by Rust core, UniFFI, Swift, and Kotlin tests. CLI/TUI tests reuse selected fixture values in source. Expo has a TypeScript check, not a runtime parity test suite.
 
-`test-vectors/cross-check.json` is an input-only fixture for independent implementation checks. The Rust example emitter and the bitcoinjs runner both read the same mnemonic, network, account, child-path, signing, transaction, and multisig cases, compute Dogecoin outputs independently, and compare canonical JSON output. The harness covers:
+`test-vectors/cross-check.json` is an input-only fixture for independent implementation checks. The Rust example emitter and the bitcoinjs runner both read the same mnemonic, network, account, child-path, signing, transaction, multisig, and raw-key WIF cases, compute Dogecoin outputs independently, and compare canonical JSON output. The harness covers:
 
 - BIP39 seed derivation
 - Dogecoin BIP44 account xpriv/xpub derivation
@@ -268,6 +285,7 @@ Public derivation rejects hardened path components because hardened public deriv
 - Dogecoin message signing and verification
 - Legacy P2PKH transaction signing
 - P2SH multisig redeem scripts and addresses
+- Compressed and uncompressed WIF import, message signing, and P2PKH signing from raw private keys
 
 The current cross-check fixture uses ASCII/empty passphrases. Passing it does not establish Unicode passphrase normalization, complete API coverage, or native Expo/storage behavior.
 

@@ -1,6 +1,6 @@
 use bip39::{Language as Bip39Language, Mnemonic};
 use bitcoin::bip32::{DerivationPath, Xpriv as BtcXpriv, Xpub as BtcXpub};
-use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
+use bitcoin::secp256k1::{All, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
@@ -310,15 +310,14 @@ pub fn wif_from_xpriv(xpriv: &Xpriv) -> Result<String> {
 }
 
 pub fn address_from_wif(network: Network, wif_value: &str) -> Result<WifInfo> {
-    let secret_key = secret_key_from_wif(wif_value, network)?;
+    let key = WifKey::parse(wif_value, network)?;
     let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-    let public_key_bytes = public_key.serialize();
+    let public_key_bytes = key.public_key_bytes(&secp);
     Ok(WifInfo {
         network,
-        public_key_hex: hex::encode(public_key_bytes),
+        public_key_hex: hex::encode(&public_key_bytes),
         address: p2pkh_address(network, &public_key_bytes),
-        compressed: wif_is_compressed(wif_value, network)?,
+        compressed: key.compressed,
     })
 }
 
@@ -488,27 +487,50 @@ fn is_legacy_xpub(prefix: &[u8]) -> bool {
     prefix == [0x04, 0x88, 0xb2, 0x1e] || prefix == [0x04, 0x35, 0x87, 0xcf]
 }
 
-pub(crate) fn secret_key_from_wif(value: &str, network: Network) -> Result<SecretKey> {
-    let data = base58check_decode(value)?;
-    if data.first().copied() != Some(network.prefixes().wif) {
-        return Err(Error::InvalidKey(
-            "WIF prefix does not match network".to_owned(),
-        ));
-    }
-    let key_bytes: [u8; 32] = match data.len() {
-        33 => data[1..33].try_into().expect("slice length checked"),
-        34 if data[33] == 1 => data[1..33].try_into().expect("slice length checked"),
-        _ => return Err(Error::InvalidKey("invalid WIF payload length".to_owned())),
-    };
-    SecretKey::from_slice(&key_bytes).map_err(|err| Error::InvalidKey(err.to_string()))
+/// A private key imported from WIF, together with the public-key form the
+/// WIF commits to. A WIF without the `0x01` suffix owns the address of the
+/// 65-byte uncompressed public key, so the flag must travel with the key.
+pub(crate) struct WifKey {
+    pub(crate) secret_key: SecretKey,
+    pub(crate) compressed: bool,
 }
 
-fn wif_is_compressed(value: &str, network: Network) -> Result<bool> {
-    let data = base58check_decode(value)?;
-    if data.first().copied() != Some(network.prefixes().wif) {
-        return Err(Error::InvalidKey(
-            "WIF prefix does not match network".to_owned(),
-        ));
+impl WifKey {
+    pub(crate) fn parse(value: &str, network: Network) -> Result<Self> {
+        let data = base58check_decode(value)?;
+        if data.first().copied() != Some(network.prefixes().wif) {
+            return Err(Error::InvalidKey(
+                "WIF prefix does not match network".to_owned(),
+            ));
+        }
+        let compressed = match data.len() {
+            33 => false,
+            34 if data[33] == 1 => true,
+            _ => return Err(Error::InvalidKey("invalid WIF payload length".to_owned())),
+        };
+        let secret_key = SecretKey::from_slice(&data[1..33])
+            .map_err(|err| Error::InvalidKey(err.to_string()))?;
+        Ok(Self {
+            secret_key,
+            compressed,
+        })
     }
-    Ok(data.len() == 34 && data[33] == 1)
+
+    /// The public key serialized in the WIF's own form: 33 bytes (prefix
+    /// `02`/`03`) when compressed, 65 bytes (prefix `04`) otherwise.
+    pub(crate) fn public_key_bytes(&self, secp: &Secp256k1<All>) -> Vec<u8> {
+        serialize_public_key(
+            &PublicKey::from_secret_key(secp, &self.secret_key),
+            self.compressed,
+        )
+    }
+}
+
+/// Serializes a public key as 33 compressed bytes or 65 uncompressed bytes.
+pub(crate) fn serialize_public_key(public_key: &PublicKey, compressed: bool) -> Vec<u8> {
+    if compressed {
+        public_key.serialize().to_vec()
+    } else {
+        public_key.serialize_uncompressed().to_vec()
+    }
 }

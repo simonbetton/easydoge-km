@@ -2507,3 +2507,353 @@ fn compose_builder_min_inputs_matches_the_exhaustive_minimum_for_mixed_input_kin
         }
     }
 }
+
+// --- Uncompressed WIF keys ---------------------------------------------------
+//
+// Known answers below come from outside this crate: the hash160 values of the
+// secp256k1 generator point are long-published constants, and the message
+// signature and signed transaction were produced with bitcoinjs-lib and
+// tiny-secp256k1 (RFC 6979 deterministic signatures).
+
+const KEY_ONE_UNCOMPRESSED_HASH160: &str = "91b24bf9f5288532960ac687abb035127b1d28a5";
+const KEY_ONE_COMPRESSED_HASH160: &str = "751e76e8199196d454941c45d1b3a323f1433bd6";
+const KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX: &str = "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8";
+const KEY_ONE_COMPRESSED_PUBLIC_KEY_HEX: &str =
+    "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const KEY_ONE_MESSAGE: &str = "EasyDoge KM uncompressed parity";
+const KEY_ONE_UNCOMPRESSED_MESSAGE_SIGNATURE: &str =
+    "GxtcrO1RKjW+hv4oTrtWV4UC5lqcWto7FaPive+hwhXnFIApjy9to6sJPUX1RkqBkAv8QgLvMEVBNOMKZnDYXgk=";
+const KEY_ONE_COMPRESSED_MESSAGE_SIGNATURE: &str =
+    "HxtcrO1RKjW+hv4oTrtWV4UC5lqcWto7FaPive+hwhXnFIApjy9to6sJPUX1RkqBkAv8QgLvMEVBNOMKZnDYXgk=";
+const KEY_ONE_UNCOMPRESSED_SIGNED_TX_HEX: &str = "0100000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000000008a4730440220152f88f6a4dad7239044d9ab57899707d9e04993969a8c3fbcf62608854d8af202206290d12c4b3b5820a44340979438e961a5075146c40a7ac36fbe293e0f8106d901410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ffffffff0100e1f505000000001976a914b68208afee956eedc5cfac4b1998ac0afa6f2ddd88ac00000000";
+
+/// WIF for the private key scalar 1 (the secp256k1 generator's key). It is a
+/// public throwaway used across Bitcoin-family test suites, built here so no
+/// WIF literal is committed.
+fn key_one_wif(compressed: bool) -> String {
+    let mut payload = vec![Network::Mainnet.prefixes().wif];
+    payload.extend_from_slice(&[0u8; 31]);
+    payload.push(1);
+    if compressed {
+        payload.push(0x01);
+    }
+    bs58::encode(payload).with_check().into_string()
+}
+
+/// Re-encodes a compressed WIF without its `0x01` suffix.
+fn without_compression_flag(wif: &str) -> String {
+    let mut payload = bs58::decode(wif).with_check(None).into_vec().unwrap();
+    assert_eq!(payload.pop(), Some(0x01), "expected a compressed WIF");
+    bs58::encode(payload).with_check().into_string()
+}
+
+fn p2pkh_script_pubkey_hex(pubkey_hash_hex: &str) -> String {
+    format!("76a914{pubkey_hash_hex}88ac")
+}
+
+fn p2pkh_payload_hex(address: &str) -> String {
+    let matches = inspect_address(address).unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].kind, AddressKind::P2pkh);
+    matches[0].payload_hex.clone()
+}
+
+fn key_one_envelope(pubkey_hash_hex: &str) -> SigningEnvelope {
+    let mut envelope = p2pkh_envelope();
+    envelope.inputs[0].script_pubkey_hex = p2pkh_script_pubkey_hex(pubkey_hash_hex);
+    envelope
+}
+
+fn key_one_compose_request(compressed: bool) -> ComposeTransactionRequest {
+    let mut request = compose_request_base(
+        "8888888888888888888888888888888888888888888888888888888888888888",
+        150_000_000,
+    );
+    request.utxos[0].script_pubkey_hex = p2pkh_script_pubkey_hex(if compressed {
+        KEY_ONE_COMPRESSED_HASH160
+    } else {
+        KEY_ONE_UNCOMPRESSED_HASH160
+    });
+    request.utxos[0].signers[0].wif = Some(key_one_wif(compressed));
+    request
+}
+
+#[test]
+fn uncompressed_wif_import_reports_the_uncompressed_public_key_and_its_address() {
+    let info = address_from_wif(Network::Mainnet, &key_one_wif(false)).unwrap();
+    assert!(!info.compressed);
+    assert_eq!(info.public_key_hex, KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX);
+    assert_eq!(info.public_key_hex.len(), 130);
+    assert_eq!(
+        p2pkh_payload_hex(&info.address),
+        KEY_ONE_UNCOMPRESSED_HASH160
+    );
+}
+
+#[test]
+fn compressed_wif_import_still_reports_the_compressed_public_key_and_its_address() {
+    let info = address_from_wif(Network::Mainnet, &key_one_wif(true)).unwrap();
+    assert!(info.compressed);
+    assert_eq!(info.public_key_hex, KEY_ONE_COMPRESSED_PUBLIC_KEY_HEX);
+    assert_eq!(p2pkh_payload_hex(&info.address), KEY_ONE_COMPRESSED_HASH160);
+}
+
+#[test]
+fn message_signing_with_uncompressed_wif_uses_the_uncompressed_header_and_address() {
+    let wif = key_one_wif(false);
+    let signature = sign_message(Network::Mainnet, &wif, KEY_ONE_MESSAGE).unwrap();
+    assert_eq!(
+        p2pkh_payload_hex(&signature.address),
+        KEY_ONE_UNCOMPRESSED_HASH160
+    );
+    let compact = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &signature.signature_base64,
+    )
+    .unwrap();
+    assert!(
+        (27..=30).contains(&compact[0]),
+        "uncompressed keys sign with header 27..=30, got {}",
+        compact[0]
+    );
+    assert_eq!(
+        signature.signature_base64,
+        KEY_ONE_UNCOMPRESSED_MESSAGE_SIGNATURE
+    );
+    assert!(verify_message(
+        Network::Mainnet,
+        &signature.address,
+        &signature.signature_base64,
+        KEY_ONE_MESSAGE
+    )
+    .unwrap());
+}
+
+#[test]
+fn message_signing_with_compressed_wif_keeps_the_compressed_header_and_address() {
+    let signature = sign_message(Network::Mainnet, &key_one_wif(true), KEY_ONE_MESSAGE).unwrap();
+    assert_eq!(
+        p2pkh_payload_hex(&signature.address),
+        KEY_ONE_COMPRESSED_HASH160
+    );
+    assert_eq!(
+        signature.signature_base64,
+        KEY_ONE_COMPRESSED_MESSAGE_SIGNATURE
+    );
+}
+
+#[test]
+fn verify_message_matches_the_address_form_named_by_the_signature_header() {
+    let uncompressed = address_from_wif(Network::Mainnet, &key_one_wif(false))
+        .unwrap()
+        .address;
+    let compressed = address_from_wif(Network::Mainnet, &key_one_wif(true))
+        .unwrap()
+        .address;
+    let verify = |address: &str, signature: &str| {
+        verify_message(Network::Mainnet, address, signature, KEY_ONE_MESSAGE).unwrap()
+    };
+    // Independently produced signature from the uncompressed key (header 27).
+    assert!(verify(
+        &uncompressed,
+        KEY_ONE_UNCOMPRESSED_MESSAGE_SIGNATURE
+    ));
+    assert!(!verify(&compressed, KEY_ONE_UNCOMPRESSED_MESSAGE_SIGNATURE));
+    // Same r and s with the compressed header (31) belongs to the other address.
+    assert!(verify(&compressed, KEY_ONE_COMPRESSED_MESSAGE_SIGNATURE));
+    assert!(!verify(&uncompressed, KEY_ONE_COMPRESSED_MESSAGE_SIGNATURE));
+}
+
+#[test]
+fn verify_message_rejects_signature_headers_outside_27_to_34() {
+    let address = address_from_wif(Network::Mainnet, &key_one_wif(true))
+        .unwrap()
+        .address;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut compact =
+        base64::Engine::decode(&engine, KEY_ONE_COMPRESSED_MESSAGE_SIGNATURE).unwrap();
+    for header in [0u8, 26, 35, 39, 255] {
+        compact[0] = header;
+        let tampered = base64::Engine::encode(&engine, &compact);
+        let error =
+            verify_message(Network::Mainnet, &address, &tampered, KEY_ONE_MESSAGE).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid recovery header"),
+            "header {header}: {error}"
+        );
+    }
+}
+
+#[test]
+fn sign_p2pkh_with_uncompressed_wif_reveals_the_uncompressed_public_key() {
+    let signed = sign_p2pkh_transaction(
+        Network::Mainnet,
+        &parity_unsigned_tx_hex(),
+        0,
+        &p2pkh_script_pubkey_hex(KEY_ONE_UNCOMPRESSED_HASH160),
+        &key_one_wif(false),
+        1,
+    )
+    .unwrap();
+    assert_eq!(signed.signed_tx_hex, KEY_ONE_UNCOMPRESSED_SIGNED_TX_HEX);
+
+    let tx: bitcoin::Transaction =
+        deserialize(&hex::decode(&signed.signed_tx_hex).unwrap()).unwrap();
+    let script_sig = tx.input[0].script_sig.as_bytes();
+    let signature_push_len = usize::from(script_sig[0]);
+    assert_eq!(script_sig[1 + signature_push_len], 65, "65-byte key push");
+    assert_eq!(
+        hex::encode(&script_sig[2 + signature_push_len..]),
+        KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX
+    );
+}
+
+#[test]
+fn signing_envelope_with_uncompressed_wif_records_the_uncompressed_key_and_finalizes() {
+    let envelope = key_one_envelope(KEY_ONE_UNCOMPRESSED_HASH160);
+    let signed = sign_signing_envelope(&envelope, &key_one_wif(false)).unwrap();
+    assert_eq!(signed.signatures.len(), 1);
+    assert_eq!(
+        signed.signatures[0].public_key_hex,
+        KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX
+    );
+    let combined = combine_signing_envelopes(&[signed.clone(), signed]).unwrap();
+    assert_eq!(combined.signatures.len(), 1);
+    let finalized = finalize_signing_envelope(&combined).unwrap();
+    assert_eq!(finalized.signed_tx_hex, KEY_ONE_UNCOMPRESSED_SIGNED_TX_HEX);
+}
+
+#[test]
+fn wif_compression_decides_which_p2pkh_script_the_key_controls() {
+    // Uncompressed WIF against the script locked to the compressed key hash.
+    let error = sign_signing_envelope(
+        &key_one_envelope(KEY_ONE_COMPRESSED_HASH160),
+        &key_one_wif(false),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("does not control any input"),
+        "{error}"
+    );
+    // Compressed WIF against the script locked to the uncompressed key hash.
+    let error = sign_signing_envelope(
+        &key_one_envelope(KEY_ONE_UNCOMPRESSED_HASH160),
+        &key_one_wif(true),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("does not control any input"),
+        "{error}"
+    );
+    // The compressed pairing still signs.
+    sign_signing_envelope(
+        &key_one_envelope(KEY_ONE_COMPRESSED_HASH160),
+        &key_one_wif(true),
+    )
+    .unwrap();
+}
+
+#[test]
+fn finalize_rejects_hybrid_encoded_public_key() {
+    // Hybrid SEC1 encoding: prefix 06 (even y) or 07 (odd y) followed by x and y.
+    let y_is_odd = u8::from_str_radix(&KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX[128..], 16).unwrap() & 1;
+    let hybrid_hex = format!(
+        "{:02x}{}",
+        6 + y_is_odd,
+        &KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX[2..]
+    );
+    let hybrid_hash = hash160::Hash::hash(&hex::decode(&hybrid_hex).unwrap()).to_byte_array();
+
+    let mut signed = sign_signing_envelope(
+        &key_one_envelope(KEY_ONE_UNCOMPRESSED_HASH160),
+        &key_one_wif(false),
+    )
+    .unwrap();
+    // Lock the input to the hybrid encoding's hash so only the encoding rule can reject it.
+    signed.inputs[0].script_pubkey_hex = p2pkh_script_pubkey_hex(&hex::encode(hybrid_hash));
+    signed.signatures[0].public_key_hex = hybrid_hex;
+    let error = finalize_signing_envelope(&signed).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported public key encoding"),
+        "{error}"
+    );
+}
+
+#[test]
+fn uncompressed_wif_cannot_sign_p2sh_multisig_inputs() {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    let uncompressed_cosigner = without_compression_flag(&fixture.wifs[0]);
+    let error = sign_signing_envelope(&fixture.envelope, &uncompressed_cosigner).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("uncompressed WIF keys cannot sign P2SH multisig inputs"),
+        "{error}"
+    );
+
+    let mut request = compose_request_base(
+        "9999999999999999999999999999999999999999999999999999999999999999",
+        150_000_000,
+    );
+    let input = &fixture.envelope.inputs[0];
+    request.utxos[0].kind = SigningInputKind::P2shMultisig;
+    request.utxos[0].script_pubkey_hex = input.script_pubkey_hex.clone();
+    request.utxos[0].redeem_script_hex = input.redeem_script_hex.clone();
+    request.utxos[0].multisig_threshold = Some(2);
+    request.utxos[0].multisig_public_keys_hex = fixture.descriptor.public_keys_hex.clone();
+    request.utxos[0].signers[0].wif = Some(uncompressed_cosigner);
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("uncompressed WIF keys cannot sign P2SH multisig inputs"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_signs_with_uncompressed_wif_and_sizes_the_fee_for_a_65_byte_key() {
+    let result = compose_and_sign_transaction(&key_one_compose_request(false)).unwrap();
+    // 10 bytes of framing, one 181-byte input (65-byte key push), two 34-byte outputs.
+    assert_eq!(result.estimated_size_bytes, 259);
+    assert_eq!(result.fee_koinu, 259);
+    let actual = result.actual_size_bytes.expect("signed by the WIF signer");
+    assert!(
+        actual <= result.estimated_size_bytes,
+        "actual {actual} must not exceed the estimate {}",
+        result.estimated_size_bytes
+    );
+    // Sizing the wrong key form would be off by 32 bytes.
+    assert!(result.estimated_size_bytes - actual < 32);
+    let signed_tx_hex = result.signed_tx_hex.unwrap();
+    assert!(signed_tx_hex.contains(&format!("41{KEY_ONE_UNCOMPRESSED_PUBLIC_KEY_HEX}")));
+    assert!(result.signing_envelope.is_none());
+}
+
+#[test]
+fn compose_builder_keeps_the_33_byte_key_estimate_for_compressed_and_unsigned_p2pkh_inputs() {
+    let compressed = compose_and_sign_transaction(&key_one_compose_request(true)).unwrap();
+    assert_eq!(compressed.estimated_size_bytes, 227);
+    assert!(compressed.actual_size_bytes.unwrap() <= 227);
+
+    // Without a signer the builder cannot know the key form and assumes compressed.
+    let mut unsigned = key_one_compose_request(false);
+    unsigned.utxos[0].signers.clear();
+    let result = compose_and_sign_transaction(&unsigned).unwrap();
+    assert_eq!(result.estimated_size_bytes, 227);
+    assert!(result.signed_tx_hex.is_none());
+    assert!(result.signing_envelope.is_some());
+}
+
+#[test]
+fn compose_builder_rejects_wif_whose_compression_does_not_match_the_p2pkh_utxo() {
+    let mut request = key_one_compose_request(false);
+    request.utxos[0].script_pubkey_hex = p2pkh_script_pubkey_hex(KEY_ONE_COMPRESSED_HASH160);
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error.to_string().contains("does not match P2PKH UTXO"),
+        "{error}"
+    );
+}
