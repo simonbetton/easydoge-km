@@ -260,15 +260,17 @@ Reveal a generated mnemonic explicitly:
 easydoge-km mnemonic generate --reveal
 ```
 
-Derive an account key set:
+Derive an account key set. Secrets are read from a file or standard input so they stay out of shell history and process listings; the values below are the public test vector (see [CLI.md](CLI.md#supplying-secrets) for real secrets):
 
 ```sh
-easydoge-km xpriv from-mnemonic \
-  --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
-  --passphrase TREZOR \
+printf '%s' "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" > phrase.txt
+printf '%s' "TREZOR" | easydoge-km xpriv from-mnemonic \
+  --phrase-file phrase.txt \
+  --passphrase-file - \
   --network mainnet \
   --account 0 \
   --reveal
+rm phrase.txt
 ```
 
 Launch the TUI:

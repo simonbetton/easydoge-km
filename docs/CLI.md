@@ -31,9 +31,37 @@ Typical flow:
 2. `xpriv from-mnemonic` — derive the account xpriv/xpub at `m/44'/3'/account'`
 3. `address derive --xpub … --path m/0/0` — derive a watch-only receive address from the account xpub
 
-`address derive` accepts `--xpub` or `--xpriv` plus a relative path (for example `m/0/0` for incoming, `m/1/0` for outgoing/change). It does not take a mnemonic directly.
+`address derive` accepts exactly one key source — `--xpub`, `--xpriv-file`, or the literal `--xpriv` — plus a relative path (for example `m/0/0` for incoming, `m/1/0` for outgoing/change). It does not take a mnemonic directly.
 
 Subcommands cover mnemonic handling, account and path derivation, WIF import/export, address validation, message signing, P2PKH transaction signing, compose-and-sign transaction building, multisig envelopes, and more. See `easydoge-km --help`.
+
+### Supplying secrets
+
+Do not type seed phrases, BIP39 passphrases, extended private keys, or WIFs as flag values. Literal arguments are saved in shell history and are visible to other local users through process listings. Every secret-bearing flag has a `-file` companion that takes a path instead:
+
+| Secret | File or standard input | Literal flag (discouraged) |
+| --- | --- | --- |
+| Seed phrase | `--phrase-file <PATH>` | `--phrase` |
+| BIP39 passphrase | `--passphrase-file <PATH>` | `--passphrase` |
+| Extended private key | `--xpriv-file <PATH>` | `--xpriv` |
+| WIF private key | `--wif-file <PATH>` | `--wif` |
+
+- The path `-` reads standard input. Only one secret per invocation can come from standard input; put any other in a file.
+- Exactly one trailing line ending (`\n` or `\r\n`) is removed. Nothing else is trimmed, so a passphrase keeps its leading and trailing spaces, and a file that ends in two newlines keeps one of them.
+- The content must be UTF-8, at most 64 KiB, and not empty. To use no passphrase, omit both passphrase flags.
+- A literal flag and its `-file` companion cannot be combined. `address derive` takes exactly one of `--xpub`, `--xpriv-file`, or `--xpriv`.
+- Errors name the flag and the path, never the contents.
+- The literal flags remain for public test vectors and print a warning on standard error each time they are used.
+
+Keep secret files readable only by you (`chmod 600`) and delete them when you are done. Piping from `printf` or `echo` with the secret typed inline still records it in shell history. Read it without echo instead:
+
+```sh
+read -rs SEED_PHRASE
+printf '%s' "$SEED_PHRASE" | easydoge-km mnemonic validate --phrase-file -
+unset SEED_PHRASE
+```
+
+Typing directly into `--phrase-file -` at a terminal also works (finish with Ctrl-D), but the terminal echoes what you type.
 
 ### Compose and sign a transaction
 
@@ -56,15 +84,17 @@ Examples and the TUI sample mode use the shared vector in [test-vectors/parity.j
 - Account path: `m/44'/3'/0'`
 - First receive address (`m/44'/3'/0'/0/0`): `DMn7J63QSZUR9XNxsUJtvsttZVzV9Am4qM`
 
-Example:
+Example. The phrase and passphrase are public test values, so writing them inline here is harmless; never do this with a real secret (see [Supplying secrets](#supplying-secrets)):
 
 ```sh
-easydoge-km xpriv from-mnemonic \
-  --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
-  --passphrase TREZOR \
+printf '%s' "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" > phrase.txt
+printf '%s' "TREZOR" | easydoge-km xpriv from-mnemonic \
+  --phrase-file phrase.txt \
+  --passphrase-file - \
   --network mainnet \
   --account 0 \
   --reveal
+rm phrase.txt
 ```
 
 ## Ratatui TUI

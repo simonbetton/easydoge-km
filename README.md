@@ -68,13 +68,17 @@ easydoge-km tui
 Derive an account key set from a known test mnemonic:
 
 ```sh
-easydoge-km xpriv from-mnemonic \
-  --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
-  --passphrase TREZOR \
+printf '%s' "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" > phrase.txt
+printf '%s' "TREZOR" | easydoge-km xpriv from-mnemonic \
+  --phrase-file phrase.txt \
+  --passphrase-file - \
   --network mainnet \
   --account 0 \
   --reveal
+rm phrase.txt
 ```
+
+Real secrets should come from a protected file or standard input, never from a literal flag; see [Supplying secrets](docs/CLI.md#supplying-secrets).
 
 ## API Surfaces
 

@@ -26,7 +26,8 @@ Extended public keys are not spending secrets, but they reveal wallet structure 
 
 - The Rust core is the canonical implementation.
 - Generated Swift/Kotlin bindings call the Rust FFI implementation; Expo adds handwritten converters and platform storage. The [API guide](API.md) lists coverage and wire-format differences.
-- Successful CLI output redacts mnemonics, seeds, xprivs, WIFs, and message signatures unless `--reveal` is used. This does not protect command-line arguments, shell history, request files, or arbitrary application logging.
+- Successful CLI output redacts mnemonics, seeds, xprivs, WIFs, and message signatures unless `--reveal` is used. Redaction does not protect request files or arbitrary application logging.
+- CLI secret inputs (seed phrase, BIP39 passphrase, xpriv, WIF) can be read from a file or from standard input with `--phrase-file`, `--passphrase-file`, `--xpriv-file`, and `--wif-file`, which keeps them out of command-line arguments, shell history, and process listings. The literal `--phrase`, `--passphrase`, `--xpriv`, and `--wif` flags remain for public test vectors; values passed that way are still exposed through shell history and process listings, and the CLI prints a warning on standard error when they are used. Protecting secret files, and the shell commands that create them, is the operator's responsibility.
 - Xpub derivation rejects hardened child paths.
 - Dogecoin-native extended-key prefixes are emitted by default.
 - BIP39 seed phrases and BIP39 seeds cannot be recovered from xprivs.
@@ -61,6 +62,7 @@ The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrappe
 ## Operational Requirements
 
 - Never log seed phrases, xprivs, WIFs, or raw private keys.
+- Pass CLI secrets through the `-file` flags or standard input, never as literal flag values.
 - Never accept xpub-derived hardened paths.
 - Keep release artifacts reproducible from source and CI.
 - Run `./scripts/verify.sh` before release.
