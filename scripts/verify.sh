@@ -18,6 +18,8 @@ cargo doc --workspace --no-deps --locked
 (cd bindings/swift && swift test)
 npx -y -p typescript@7.0.2 tsc -p bindings/expo/tsconfig.json --noEmit
 
+bash scripts/check-native-build-pins.sh
+
 if [[ -x bindings/kotlin/gradlew ]]; then
   (cd bindings/kotlin && ./gradlew test)
 else
