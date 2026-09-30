@@ -68,13 +68,19 @@ The request includes:
 - `utxos`: display/RPC `txid` hex, `vout`, `previous_output_value_koinu`, `script_pubkey_hex`, spend kind, and signer metadata. P2SH multisig UTXOs also require `redeem_script_hex`; `multisig_threshold` and `multisig_public_keys_hex` are optional.
 - `outputs`: address outputs, zero-value OP_RETURN data outputs, or `ExpertRawScript` outputs.
 - `fee_policy`: `fee_rate_koinu_per_kb` and `dust_threshold_koinu`.
-- `coin_selection`: `MinInputs`, `SmallestFirst`, `LargestFirst`, or `ManualSelectedInputs`.
-- `change`: an address or xpriv derivation source for non-dust change.
+- `coin_selection`: the Coin Selection strategy. Every strategy puts the candidate UTXOs in a fixed order (ties broken by `txid` text, then `vout`), adds them one at a time, and stops at the first selection that funds the transaction:
+  - `MinInputs`: highest value net of the fee for spending that input first (`previous_output_value_koinu` minus the input's estimated size at `fee_rate_koinu_per_kb`). This funds the transaction with the fewest inputs the supplied UTXOs allow.
+  - `LargestFirst`: highest `previous_output_value_koinu` first, ignoring what each input costs to spend.
+  - `SmallestFirst`: lowest `previous_output_value_koinu` first.
+  - `ManualSelectedInputs`: only UTXOs with `manually_selected: true` are candidates, lowest `previous_output_value_koinu` first; selection still stops as soon as the transaction is funded, so not every manually selected UTXO is necessarily spent.
+- `change`: an address or xpriv derivation source for the change output. It is required when the amount left after the spend outputs and the fee is non-zero and at least `dust_threshold_koinu`.
 - `options`: version, lock time, sequence, and sighash type. Size estimates use serialized bytes, not vbytes or weight. The SDK accepts six sighash values: `0x01` (ALL), `0x02` (NONE), `0x03` (SINGLE) and their `0x80` ANYONECANPAY variants; other values are rejected. `SIGHASH_SINGLE` is rejected for any input index that has no output at the same index.
 
 Each UTXO outpoint (`txid:vout`) may be listed once per request. A request that repeats an outpoint is rejected with `duplicate UTXO outpoint <txid>:<vout>` before Coin Selection runs, even when the repeated entry would not have been selected or is not manually selected. Txid hex is compared case-insensitively.
 
 The result reports selected and skipped inputs, input total, spend output total, change amount/address/script, fee, estimated serialized size, actual serialized size when signed, whether dust change was folded into the fee, unsigned tx hex, signed tx hex when complete, and a signing envelope when P2PKH or multisig signatures are missing. These totals use caller-provided UTXO values; they are not an independent audit of chain data.
+
+A selection funds the transaction when its input total covers the spend outputs plus the fee for the transaction without a change output. What is left over becomes a change output only if, after also paying the fee for that extra output, the change is non-zero and at least `dust_threshold_koinu`. Otherwise no change output is created, the whole leftover is added to the fee, and `dust_change_folded_into_fee` is `true` when that leftover is non-zero. The builder never adds another input just to afford a change output, so the fee can exceed the rate-based fee by at most the fee for one change output plus the dust threshold.
 
 Each UTXO the builder selects is validated before it contributes to the size estimate, and signer ownership is checked before signing. P2PKH UTXOs must carry a canonical 25-byte pay-to-pubkey-hash script pubkey, and P2PKH signers must match it. P2SH multisig UTXOs must carry a redeem script of the form `m <33-byte public keys> n OP_CHECKMULTISIG` that hashes to the script pubkey. The threshold used for fee sizing, and the threshold and public keys written to a returned signing envelope (in redeem-script order), are read from that redeem script. `multisig_threshold` and `multisig_public_keys_hex` are optional cross-checks: when supplied they must agree with the redeem script, otherwise composing fails with `multisig threshold metadata does not match redeem script` or `multisig public key metadata does not match redeem script`. Signatures only count when the public key is part of the redeem script.
 

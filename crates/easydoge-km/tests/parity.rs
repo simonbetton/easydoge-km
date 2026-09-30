@@ -2045,3 +2045,465 @@ fn derivation_deeper_than_bip32_allows_is_an_error_not_a_panic() {
     let error = limit_error(derive_address_from_xpub(&account.xpub, &too_deep));
     assert!(error.contains("depth 256"), "{error}");
 }
+
+// ---- Coin Selection and change funding ----
+//
+// Size arithmetic used by the tests below (serialized bytes, as estimated by
+// the builder; with `fee_rate_koinu_per_kb = 1_000` the fee in koinu equals
+// the size in bytes):
+//   transaction overhead            4 + 1 + 1 + 4           =  10
+//   one P2PKH output                8 + 1 + 25              =  34
+//   one P2PKH input                 32 + 4 + 1 + 108 + 4    = 149
+//   one 2-of-2 P2SH multisig input  32 + 4 + 1 + 221 + 4    = 262
+//   1 P2PKH input, 1 output: 193    with a change output: 227
+//   2 P2PKH inputs, 1 output: 342   with a change output: 376
+//   3 P2PKH inputs, 1 output: 491   with a change output: 525
+//   1 multisig input, 1 output: 306
+//   1 multisig + 1 P2PKH input, 1 output: 455; with a change output: 489
+
+/// A 2-of-2 P2SH multisig UTXO built from the shared fixture keys, without
+/// signer material.
+fn two_of_two_utxo(txid: &str, previous_output_value_koinu: u64) -> SpendableUtxo {
+    let fixture = two_of_two_fixture(&parity_unsigned_tx_hex(), 0);
+    SpendableUtxo {
+        txid: txid.to_owned(),
+        vout: 0,
+        previous_output_value_koinu,
+        script_pubkey_hex: fixture.envelope.inputs[0].script_pubkey_hex.clone(),
+        kind: SigningInputKind::P2shMultisig,
+        redeem_script_hex: Some(fixture.descriptor.redeem_script_hex.clone()),
+        multisig_threshold: Some(2),
+        multisig_public_keys_hex: fixture.descriptor.public_keys_hex.clone(),
+        signers: vec![],
+        manually_selected: false,
+    }
+}
+
+/// Appends a copy of the request's first (P2PKH) UTXO with a new outpoint
+/// and value.
+fn push_p2pkh_utxo(
+    request: &mut ComposeTransactionRequest,
+    txid: &str,
+    vout: u32,
+    previous_output_value_koinu: u64,
+) {
+    let mut utxo = request.utxos[0].clone();
+    utxo.txid = txid.to_owned();
+    utxo.vout = vout;
+    utxo.previous_output_value_koinu = previous_output_value_koinu;
+    request.utxos.push(utxo);
+}
+
+fn selected_outpoints(result: &easydoge_km::ComposeTransactionResult) -> Vec<(String, u32)> {
+    result
+        .selected_inputs
+        .iter()
+        .map(|input| (input.txid.clone(), input.vout))
+        .collect()
+}
+
+fn selected_values(result: &easydoge_km::ComposeTransactionResult) -> Vec<u64> {
+    result
+        .selected_inputs
+        .iter()
+        .map(|input| input.previous_output_value_koinu)
+        .collect()
+}
+
+#[test]
+fn compose_builder_min_inputs_prefers_one_cheap_input_over_a_larger_costlier_input() {
+    let p2pkh_txid = "a1".repeat(32);
+    let multisig_txid = "b2".repeat(32);
+    // Spend 9_000. The P2PKH UTXO funds it alone: 9_193 = 9_000 + 193.
+    // The multisig UTXO has the larger raw value but cannot: 9_250 < 9_000 + 306.
+    // Net of its own input fee the multisig UTXO is worth less:
+    //   P2PKH    9_193 - 149 = 9_044
+    //   multisig 9_250 - 262 = 8_988
+    let mut request = compose_request_base(&p2pkh_txid, 9_193);
+    request.utxos.push(two_of_two_utxo(&multisig_txid, 9_250));
+    request.outputs[0].value_koinu = 9_000;
+    request.coin_selection = CoinSelectionStrategy::MinInputs;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(selected_outpoints(&result), vec![(p2pkh_txid, 0)]);
+    assert_eq!(result.estimated_size_bytes, 193);
+    assert_eq!(result.fee_koinu, 193);
+    assert_eq!(result.change_amount_koinu, 0);
+    assert!(!result.dust_change_folded_into_fee);
+    assert_eq!(result.skipped_inputs.len(), 1);
+    assert_eq!(result.skipped_inputs[0].txid, multisig_txid);
+    assert_eq!(result.skipped_inputs[0].reason, "not selected by strategy");
+    assert!(result.signed_tx_hex.is_some());
+}
+
+#[test]
+fn compose_builder_largest_first_orders_mixed_input_kinds_by_raw_value() {
+    let p2pkh_txid = "a1".repeat(32);
+    let multisig_txid = "b2".repeat(32);
+    // Same UTXOs as the MinInputs test above. LargestFirst is defined on raw
+    // value, so it starts with the 9_250 multisig UTXO (not enough alone:
+    // 9_250 < 9_000 + 306) and then adds the 9_193 P2PKH UTXO.
+    let mut request = compose_request_base(&p2pkh_txid, 9_193);
+    request.utxos.push(two_of_two_utxo(&multisig_txid, 9_250));
+    request.outputs[0].value_koinu = 9_000;
+    request.coin_selection = CoinSelectionStrategy::LargestFirst;
+
+    let result = compose_and_sign_transaction(&request).unwrap();
+
+    assert_eq!(
+        selected_outpoints(&result),
+        vec![(multisig_txid, 0), (p2pkh_txid, 0)]
+    );
+    assert_eq!(result.input_total_koinu, 18_443);
+    // 10 + 262 + 149 + 34 + 34 = 489 bytes with the change output. This pins
+    // the 262-byte estimate for a 2-of-2 multisig input used in this section.
+    assert_eq!(result.estimated_size_bytes, 489);
+    assert_eq!(result.fee_koinu, 489);
+    assert_eq!(result.change_amount_koinu, 8_954);
+    assert!(result.skipped_inputs.is_empty());
+    // The multisig input has no signers, so the result is a Signing Envelope.
+    assert!(result.signed_tx_hex.is_none());
+    assert!(result.signing_envelope.is_some());
+}
+
+#[test]
+fn compose_builder_strategies_keep_raw_value_order_for_equal_cost_inputs() {
+    // Three P2PKH UTXOs cost the same to spend, so ordering by value net of
+    // the input fee is the same as ordering by raw value.
+    let mut request = compose_request_base(&"c1".repeat(32), 30_000_000);
+    push_p2pkh_utxo(&mut request, &"c2".repeat(32), 0, 80_000_000);
+    push_p2pkh_utxo(&mut request, &"c3".repeat(32), 0, 50_000_000);
+    request.outputs[0].value_koinu = 100_000_000;
+
+    for strategy in [
+        CoinSelectionStrategy::MinInputs,
+        CoinSelectionStrategy::LargestFirst,
+    ] {
+        request.coin_selection = strategy;
+        let result = compose_and_sign_transaction(&request).unwrap();
+        // 80M alone is short; 80M + 50M pays 100M + 376 with change.
+        assert_eq!(
+            selected_values(&result),
+            vec![80_000_000, 50_000_000],
+            "{strategy:?}"
+        );
+        assert_eq!(result.fee_koinu, 376, "{strategy:?}");
+        assert_eq!(result.change_amount_koinu, 29_999_624, "{strategy:?}");
+        assert_eq!(result.skipped_inputs.len(), 1, "{strategy:?}");
+    }
+
+    request.coin_selection = CoinSelectionStrategy::SmallestFirst;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    // 30M and 30M + 50M are short; all three pay 100M + 525 with change.
+    assert_eq!(
+        selected_values(&result),
+        vec![30_000_000, 50_000_000, 80_000_000]
+    );
+    assert_eq!(result.fee_koinu, 525);
+    assert_eq!(result.change_amount_koinu, 59_999_475);
+    assert!(result.skipped_inputs.is_empty());
+}
+
+#[test]
+fn compose_builder_selection_is_deterministic_for_equal_value_utxos() {
+    let low_txid = "aa".repeat(32);
+    let high_txid = "bb".repeat(32);
+    // Three equal P2PKH UTXOs; one is enough. Ties break by txid text, then
+    // vout, whatever order the caller lists them in.
+    let mut request = compose_request_base(&high_txid, 100_000_000);
+    push_p2pkh_utxo(&mut request, &low_txid, 1, 100_000_000);
+    push_p2pkh_utxo(&mut request, &low_txid, 0, 100_000_000);
+
+    for strategy in [
+        CoinSelectionStrategy::MinInputs,
+        CoinSelectionStrategy::LargestFirst,
+        CoinSelectionStrategy::SmallestFirst,
+    ] {
+        request.coin_selection = strategy;
+        let listed = compose_and_sign_transaction(&request).unwrap();
+        let mut reversed_request = request.clone();
+        reversed_request.utxos.reverse();
+        let reversed = compose_and_sign_transaction(&reversed_request).unwrap();
+
+        assert_eq!(
+            selected_outpoints(&listed),
+            vec![(low_txid.clone(), 0)],
+            "{strategy:?}"
+        );
+        assert_eq!(
+            selected_outpoints(&reversed),
+            selected_outpoints(&listed),
+            "{strategy:?}"
+        );
+        assert_eq!(
+            listed.unsigned_tx_hex, reversed.unsigned_tx_hex,
+            "{strategy:?}"
+        );
+    }
+}
+
+#[test]
+fn compose_builder_folds_a_remainder_that_cannot_pay_for_change_into_the_fee() {
+    // One P2PKH input and one output need a fee of 193; a change output
+    // would raise the fee by 34 to 227. `remainder` is what is left after
+    // the spend and the 193 fee.
+    //   remainder  0      -> exact, nothing folded
+    //   remainder  1..=33 -> cannot pay for the change output: fold
+    //   remainder  34     -> pays for the change output but leaves 0: fold
+    //   remainder  35     -> change output of 1 koinu (dust threshold is 1)
+    for (remainder, expected_fee, expected_change, expected_folded) in [
+        (0u64, 193u64, 0u64, false),
+        (1, 194, 0, true),
+        (10, 203, 0, true),
+        (33, 226, 0, true),
+        (34, 227, 0, true),
+        (35, 227, 1, false),
+    ] {
+        let request = compose_request_base(&"d1".repeat(32), 50_000_000 + 193 + remainder);
+
+        let result = compose_and_sign_transaction(&request)
+            .unwrap_or_else(|error| panic!("remainder {remainder}: {error}"));
+
+        assert_eq!(result.selected_inputs.len(), 1, "remainder {remainder}");
+        assert_eq!(result.fee_koinu, expected_fee, "remainder {remainder}");
+        assert_eq!(
+            result.change_amount_koinu, expected_change,
+            "remainder {remainder}"
+        );
+        assert_eq!(
+            result.dust_change_folded_into_fee, expected_folded,
+            "remainder {remainder}"
+        );
+        assert_eq!(
+            result.change_address.is_some(),
+            expected_change > 0,
+            "remainder {remainder}"
+        );
+        assert_eq!(
+            result.estimated_size_bytes,
+            if expected_change > 0 { 227 } else { 193 },
+            "remainder {remainder}"
+        );
+        assert_eq!(
+            result.input_total_koinu,
+            result.spend_output_total_koinu + result.change_amount_koinu + result.fee_koinu,
+            "remainder {remainder}"
+        );
+        assert!(result.signed_tx_hex.is_some(), "remainder {remainder}");
+    }
+}
+
+#[test]
+fn compose_builder_does_not_add_an_input_to_pay_for_a_change_output() {
+    let funding_txid = "e1".repeat(32);
+    // The first UTXO pays the spend and the 193 fee with 10 koinu left over.
+    // The builder must fold those 10 koinu into the fee instead of pulling in
+    // the second UTXO to afford a change output.
+    let mut request = compose_request_base(&funding_txid, 50_000_203);
+    push_p2pkh_utxo(&mut request, &"e2".repeat(32), 0, 1_000);
+
+    for strategy in [
+        CoinSelectionStrategy::MinInputs,
+        CoinSelectionStrategy::LargestFirst,
+    ] {
+        request.coin_selection = strategy;
+        let result = compose_and_sign_transaction(&request).unwrap();
+        assert_eq!(
+            selected_outpoints(&result),
+            vec![(funding_txid.clone(), 0)],
+            "{strategy:?}"
+        );
+        assert_eq!(result.fee_koinu, 203, "{strategy:?}");
+        assert_eq!(result.change_amount_koinu, 0, "{strategy:?}");
+        assert!(result.dust_change_folded_into_fee, "{strategy:?}");
+        assert_eq!(result.skipped_inputs.len(), 1, "{strategy:?}");
+    }
+}
+
+#[test]
+fn compose_builder_every_strategy_funds_a_single_utxo_with_unaffordable_change() {
+    for strategy in [
+        CoinSelectionStrategy::MinInputs,
+        CoinSelectionStrategy::SmallestFirst,
+        CoinSelectionStrategy::LargestFirst,
+        CoinSelectionStrategy::ManualSelectedInputs,
+    ] {
+        let mut request = compose_request_base(&"f1".repeat(32), 50_000_203);
+        request.utxos[0].manually_selected = true;
+        request.coin_selection = strategy;
+
+        let result = compose_and_sign_transaction(&request)
+            .unwrap_or_else(|error| panic!("{strategy:?}: {error}"));
+
+        assert_eq!(result.selected_inputs.len(), 1, "{strategy:?}");
+        assert!(result.skipped_inputs.is_empty(), "{strategy:?}");
+        assert_eq!(result.fee_koinu, 203, "{strategy:?}");
+        assert_eq!(result.change_amount_koinu, 0, "{strategy:?}");
+        assert!(result.change_address.is_none(), "{strategy:?}");
+        assert!(result.dust_change_folded_into_fee, "{strategy:?}");
+    }
+}
+
+#[test]
+fn compose_builder_with_zero_dust_threshold_neither_requires_nor_creates_empty_change() {
+    // Exact funding, no change destination: nothing remains, so none is needed.
+    let mut request = compose_request_base(&"0a".repeat(32), 50_000_193);
+    request.fee_policy.dust_threshold_koinu = 0;
+    request.change = None;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.fee_koinu, 193);
+    assert_eq!(result.change_amount_koinu, 0);
+    assert!(!result.dust_change_folded_into_fee);
+
+    // Exact funding with a change destination: still no change output.
+    let mut request = compose_request_base(&"0b".repeat(32), 50_000_193);
+    request.fee_policy.dust_threshold_koinu = 0;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.fee_koinu, 193);
+    assert!(result.change_address.is_none());
+    assert!(!result.dust_change_folded_into_fee);
+
+    // The remainder (34) pays exactly for a change output that would then be
+    // worth 0 koinu: fold it instead of emitting a zero-value output.
+    let mut request = compose_request_base(&"0c".repeat(32), 50_000_227);
+    request.fee_policy.dust_threshold_koinu = 0;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.fee_koinu, 227);
+    assert_eq!(result.change_amount_koinu, 0);
+    assert!(result.change_address.is_none());
+    assert!(result.change_script_pubkey_hex.is_none());
+    assert!(result.dust_change_folded_into_fee);
+    assert_eq!(result.estimated_size_bytes, 193);
+}
+
+#[test]
+fn compose_builder_still_requires_a_change_destination_for_a_non_dust_remainder() {
+    // 10 koinu remain and the dust threshold is 1. Without a change
+    // destination the builder cannot measure a change output, so it refuses
+    // rather than silently paying the remainder as fee.
+    let mut request = compose_request_base(&"0d".repeat(32), 50_000_203);
+    request.change = None;
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("change destination is required when change is not dust"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_reports_insufficient_funds_when_the_remaining_input_costs_more_than_it_adds() {
+    // Spend 9_100. The first UTXO is 100 short of 9_100 + 193. The second is
+    // worth 120 koinu but costs 149 to spend, so adding it cannot help:
+    // 9_193 + 120 = 9_313 < 9_100 + 342.
+    let mut request = compose_request_base(&"1a".repeat(32), 9_193);
+    push_p2pkh_utxo(&mut request, &"1b".repeat(32), 0, 120);
+    request.outputs[0].value_koinu = 9_100;
+
+    for strategy in [
+        CoinSelectionStrategy::MinInputs,
+        CoinSelectionStrategy::SmallestFirst,
+        CoinSelectionStrategy::LargestFirst,
+    ] {
+        request.coin_selection = strategy;
+        let error = compose_and_sign_transaction(&request).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("insufficient funds for outputs and fee"),
+            "{strategy:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn compose_builder_min_inputs_still_rejects_a_reachable_utxo_without_a_redeem_script() {
+    // The multisig UTXO has the largest value but no redeem script, so its
+    // input size cannot be estimated. Ordering must not panic, and because
+    // the UTXO is still the first candidate its validation error surfaces.
+    let mut request = compose_request_base(&"2a".repeat(32), 100_000_000);
+    let mut broken = two_of_two_utxo(&"2b".repeat(32), 200_000_000);
+    broken.redeem_script_hex = None;
+    request.utxos.push(broken);
+    request.coin_selection = CoinSelectionStrategy::MinInputs;
+
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("P2SH multisig UTXO requires redeem script"),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_min_inputs_matches_the_exhaustive_minimum_for_mixed_input_kinds() {
+    // Deterministic pseudo-random requests mixing P2PKH (149-byte) and 2-of-2
+    // multisig (262-byte) inputs. The expected input count comes from trying
+    // every subset with the fee arithmetic written out independently here.
+    let multisig_template = two_of_two_utxo(&"00".repeat(32), 0);
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |bound: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % bound
+    };
+
+    for case in 0..200u32 {
+        let fee_rate = [1_000u64, 2_500, 777][(case % 3) as usize];
+        let utxo_count = 2 + next(5) as usize;
+        let mut request = compose_request_base(&"00".repeat(32), 0);
+        let p2pkh_template = request.utxos.remove(0);
+        let mut candidates = Vec::new();
+        for position in 0..utxo_count {
+            let is_multisig = next(2) == 1;
+            let value = 100 + next(1_400);
+            let mut utxo = if is_multisig {
+                multisig_template.clone()
+            } else {
+                p2pkh_template.clone()
+            };
+            utxo.txid = format!("{:064x}", (u64::from(case) << 8) | position as u64);
+            utxo.previous_output_value_koinu = value;
+            candidates.push((value, if is_multisig { 262u64 } else { 149u64 }));
+            request.utxos.push(utxo);
+        }
+        let spend = 1 + next(2_500);
+        request.outputs[0].value_koinu = spend;
+        request.fee_policy.fee_rate_koinu_per_kb = fee_rate;
+        request.coin_selection = CoinSelectionStrategy::MinInputs;
+
+        let expected_minimum = (1u32..(1 << utxo_count))
+            .filter(|subset| {
+                let chosen = candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, _)| subset & (1 << position) != 0);
+                let (total, size) = chosen.fold((0u64, 44u64), |(total, size), (_, utxo)| {
+                    (total + utxo.0, size + utxo.1)
+                });
+                total >= spend + (size * fee_rate).div_ceil(1_000)
+            })
+            .map(u32::count_ones)
+            .min();
+
+        match (compose_and_sign_transaction(&request), expected_minimum) {
+            (Ok(result), Some(minimum)) => {
+                assert_eq!(result.selected_inputs.len() as u32, minimum, "case {case}");
+            }
+            (Err(error), None) => {
+                assert!(
+                    error.to_string().contains("insufficient funds"),
+                    "case {case}: {error}"
+                );
+            }
+            (outcome, expected) => panic!(
+                "case {case}: builder {:?}, exhaustive minimum {expected:?}",
+                outcome.map(|result| result.selected_inputs.len())
+            ),
+        }
+    }
+}

@@ -118,12 +118,22 @@ pub struct FeePolicy {
     pub dust_threshold_koinu: u64,
 }
 
+/// How the builder orders candidate UTXOs for Coin Selection. Every strategy
+/// adds UTXOs in its order, ties broken by `txid` text and then `vout`, and
+/// stops at the first selection that funds the transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CoinSelectionStrategy {
+    /// Highest value net of the fee for spending that input first. Funds the
+    /// transaction with the fewest inputs the supplied UTXOs allow.
     MinInputs,
+    /// Lowest `previous_output_value_koinu` first.
     SmallestFirst,
+    /// Highest `previous_output_value_koinu` first, ignoring what each input
+    /// costs to spend.
     LargestFirst,
+    /// Only UTXOs with `manually_selected` set, lowest
+    /// `previous_output_value_koinu` first.
     ManualSelectedInputs,
 }
 
@@ -542,16 +552,19 @@ fn funding_for_selection(
         return Ok(None);
     }
     let remainder_without_change = input_total - spend_total - no_change_fee;
-    if remainder_without_change < request.fee_policy.dust_threshold_koinu {
-        return Ok(Some(FundingResult {
-            selected_indices: selected_indices.to_vec(),
-            skipped_inputs: vec![],
-            fee_koinu: input_total - spend_total,
-            estimated_size_bytes: no_change_size,
-            change_amount_koinu: 0,
-            change_script: None,
-            dust_change_folded_into_fee: remainder_without_change > 0,
-        }));
+    // Funding without a change output: the whole remainder is paid as fee.
+    let without_change = FundingResult {
+        selected_indices: selected_indices.to_vec(),
+        skipped_inputs: vec![],
+        fee_koinu: input_total - spend_total,
+        estimated_size_bytes: no_change_size,
+        change_amount_koinu: 0,
+        change_script: None,
+        dust_change_folded_into_fee: remainder_without_change > 0,
+    };
+    let dust_threshold = request.fee_policy.dust_threshold_koinu;
+    if remainder_without_change == 0 || remainder_without_change < dust_threshold {
+        return Ok(Some(without_change));
     }
 
     let change_script = change_script(request)?;
@@ -562,36 +575,40 @@ fn funding_for_selection(
         Some(&change_script),
     )?;
     let with_change_fee = fee_for_size(with_change_size, request.fee_policy.fee_rate_koinu_per_kb)?;
-    if input_total < checked_add(spend_total, with_change_fee)? {
-        return Ok(None);
+    // `None` when the remainder cannot pay for the change output itself. The
+    // selection still funds the transaction, so never report it as unfunded.
+    let change_amount = input_total.checked_sub(checked_add(spend_total, with_change_fee)?);
+    match change_amount {
+        Some(change_amount) if change_amount > 0 && change_amount >= dust_threshold => {
+            Ok(Some(FundingResult {
+                selected_indices: selected_indices.to_vec(),
+                skipped_inputs: vec![],
+                fee_koinu: with_change_fee,
+                estimated_size_bytes: with_change_size,
+                change_amount_koinu: change_amount,
+                change_script: Some(change_script),
+                dust_change_folded_into_fee: false,
+            }))
+        }
+        _ => Ok(Some(without_change)),
     }
-    let change_amount = input_total - spend_total - with_change_fee;
-    if change_amount < request.fee_policy.dust_threshold_koinu {
-        return Ok(Some(FundingResult {
-            selected_indices: selected_indices.to_vec(),
-            skipped_inputs: vec![],
-            fee_koinu: input_total - spend_total,
-            estimated_size_bytes: no_change_size,
-            change_amount_koinu: 0,
-            change_script: None,
-            dust_change_folded_into_fee: change_amount > 0,
-        }));
-    }
-    Ok(Some(FundingResult {
-        selected_indices: selected_indices.to_vec(),
-        skipped_inputs: vec![],
-        fee_koinu: with_change_fee,
-        estimated_size_bytes: with_change_size,
-        change_amount_koinu: change_amount,
-        change_script: Some(change_script),
-        dust_change_folded_into_fee: false,
-    }))
 }
 
 fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
     let mut indices = (0..request.utxos.len()).collect::<Vec<_>>();
     match request.coin_selection {
-        CoinSelectionStrategy::MinInputs | CoinSelectionStrategy::LargestFirst => {
+        CoinSelectionStrategy::MinInputs => {
+            let fee_rate = request.fee_policy.fee_rate_koinu_per_kb;
+            indices.sort_by_cached_key(|index| {
+                let utxo = &request.utxos[*index];
+                (
+                    Reverse(effective_value_scaled(utxo, fee_rate)),
+                    utxo.txid.clone(),
+                    utxo.vout,
+                )
+            });
+        }
+        CoinSelectionStrategy::LargestFirst => {
             indices.sort_by_key(|index| {
                 let utxo = &request.utxos[*index];
                 (
@@ -613,6 +630,23 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
         }
     }
     indices
+}
+
+/// Value of a UTXO net of the fee for spending it, scaled by 1000 so the
+/// per-kilobyte fee rate needs no rounding:
+/// `value * 1000 - estimated_input_size * fee_rate_koinu_per_kb`.
+///
+/// A selection funds a transaction exactly when the sum of these values
+/// covers `1000 * spend + fixed_size * fee_rate`, so taking UTXOs in
+/// descending order of this value reaches a funded selection with the fewest
+/// inputs. A UTXO whose input size cannot be estimated is ranked by its raw
+/// value; its error surfaces when the funding loop reaches it.
+fn effective_value_scaled(utxo: &SpendableUtxo, fee_rate_koinu_per_kb: u64) -> i128 {
+    let input_size = estimated_input_size(utxo).unwrap_or(0);
+    let input_size = i128::try_from(input_size).unwrap_or(i128::MAX);
+    i128::from(utxo.previous_output_value_koinu)
+        .saturating_mul(1000)
+        .saturating_sub(input_size.saturating_mul(i128::from(fee_rate_koinu_per_kb)))
 }
 
 fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
