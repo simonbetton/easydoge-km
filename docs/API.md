@@ -59,6 +59,8 @@ The request includes:
 - `change`: an address or xpriv derivation source for non-dust change.
 - `options`: version, lock time, sequence, and sighash type. Size estimates use serialized bytes, not vbytes or weight. The SDK accepts six sighash values: `0x01` (ALL), `0x02` (NONE), `0x03` (SINGLE) and their `0x80` ANYONECANPAY variants; other values are rejected. `SIGHASH_SINGLE` is rejected for any input index that has no output at the same index.
 
+Each UTXO outpoint (`txid:vout`) may be listed once per request. A request that repeats an outpoint is rejected with `duplicate UTXO outpoint <txid>:<vout>` before Coin Selection runs, even when the repeated entry would not have been selected or is not manually selected. Txid hex is compared case-insensitively.
+
 The result reports selected and skipped inputs, input total, spend output total, change amount/address/script, fee, estimated serialized size, actual serialized size when signed, whether dust change was folded into the fee, unsigned tx hex, signed tx hex when complete, and a signing envelope when P2PKH or multisig signatures are missing. These totals use caller-provided UTXO values; they are not an independent audit of chain data.
 
 Signer ownership is checked before signing. P2PKH signers must match the previous output script pubkey. P2SH multisig UTXOs must have a script pubkey matching the redeem script, and signatures only count when the public key is part of the expected multisig set.

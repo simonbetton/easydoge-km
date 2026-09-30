@@ -8,6 +8,7 @@ use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -353,6 +354,25 @@ fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
         ));
     }
     validate_sighash_type(request.options.sighash_type)?;
+    reject_duplicate_outpoints(&request.utxos)?;
+    Ok(())
+}
+
+/// A UTXO outpoint (`txid:vout`) may be listed only once per request. Counting
+/// it twice would inflate the input total and repeat a transaction input,
+/// which Dogecoin consensus rejects. Txid hex is compared case-insensitively
+/// and is deliberately not parsed here: malformed txids keep surfacing from
+/// `validate_utxo`, only for UTXOs that Coin Selection reaches.
+fn reject_duplicate_outpoints(utxos: &[SpendableUtxo]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(utxos.len());
+    for utxo in utxos {
+        if !seen.insert((utxo.txid.to_ascii_lowercase(), utxo.vout)) {
+            return Err(Error::InvalidTransaction(format!(
+                "duplicate UTXO outpoint {}:{}",
+                utxo.txid, utxo.vout
+            )));
+        }
+    }
     Ok(())
 }
 

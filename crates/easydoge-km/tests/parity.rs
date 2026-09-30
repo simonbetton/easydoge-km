@@ -959,3 +959,93 @@ fn compose_builder_signs_every_input_of_a_multi_utxo_transaction() {
     assert_eq!(tx.input.len(), 2);
     assert!(tx.input.iter().all(|input| !input.script_sig.is_empty()));
 }
+
+#[test]
+fn compose_builder_rejects_duplicate_utxo_outpoint_instead_of_counting_it_twice() {
+    let txid = "8888888888888888888888888888888888888888888888888888888888888888";
+    let mut request = compose_request_base(txid, 100_000_000);
+    request.utxos.push(request.utxos[0].clone());
+    // More than one copy holds: only counting the same UTXO twice could fund this.
+    request.outputs[0].value_koinu = 150_000_000;
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("duplicate UTXO outpoint {txid}:0")),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_duplicate_utxo_outpoint_even_when_one_copy_funds_the_outputs() {
+    let txid = "9999999999999999999999999999999999999999999999999999999999999999";
+    let mut request = compose_request_base(txid, 100_000_000);
+    request.utxos.push(request.utxos[0].clone());
+    // The default 50_000_000 koinu output is funded by a single copy.
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("duplicate UTXO outpoint {txid}:0")),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_duplicate_utxo_outpoint_when_txid_hex_differs_only_in_letter_case() {
+    let lowercase_txid = "abababababababababababababababababababababababababababababababab";
+    let uppercase_txid = lowercase_txid.to_ascii_uppercase();
+    let mut request = compose_request_base(lowercase_txid, 100_000_000);
+    let mut second = request.utxos[0].clone();
+    second.txid = uppercase_txid.clone();
+    request.utxos.push(second);
+    request.outputs[0].value_koinu = 150_000_000;
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    // The message reports the txid as supplied by the second (rejected) copy.
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("duplicate UTXO outpoint {uppercase_txid}:0")),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_rejects_duplicate_utxo_outpoint_that_is_not_manually_selected() {
+    let txid = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let mut request = compose_request_base(txid, 100_000_000);
+    request.coin_selection = CoinSelectionStrategy::ManualSelectedInputs;
+    request.utxos[0].manually_selected = true;
+    let mut unselected_copy = request.utxos[0].clone();
+    unselected_copy.manually_selected = false;
+    request.utxos.push(unselected_copy);
+    let error = compose_and_sign_transaction(&request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("duplicate UTXO outpoint {txid}:0")),
+        "{error}"
+    );
+}
+
+#[test]
+fn compose_builder_accepts_utxos_that_share_a_txid_but_differ_in_vout() {
+    let txid = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let mut request = compose_request_base(txid, 100_000_000);
+    let mut second = request.utxos[0].clone();
+    second.vout = 1;
+    request.utxos.push(second);
+    // Larger than either UTXO alone, so both outpoints must be selected.
+    request.outputs[0].value_koinu = 150_000_000;
+    let result = compose_and_sign_transaction(&request).unwrap();
+    assert_eq!(result.selected_inputs.len(), 2);
+    assert_eq!(result.input_total_koinu, 200_000_000);
+    let mut vouts = result
+        .selected_inputs
+        .iter()
+        .map(|input| input.vout)
+        .collect::<Vec<_>>();
+    vouts.sort_unstable();
+    assert_eq!(vouts, vec![0, 1]);
+    assert!(result.signed_tx_hex.is_some());
+}

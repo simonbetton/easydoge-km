@@ -28,6 +28,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 - **Breaking (Expo)**: koinu amounts in the Expo API are now decimal strings (`Koinu`) instead of numbers, and every other integer field is validated on the native side. Previously values above 2^53 lost precision, negative or fractional values could wrap on Android or crash on iOS.
 - Android stored-wallet records (ciphertext and IV) are now persisted to app-private no-backup storage. Previously they lived only in process memory, so a `StoredWalletHandle` became unusable after the process was killed while the Keystore key lingered.
+- The Compose-and-Sign Transaction Builder now rejects a request that lists the same UTXO outpoint (`txid:vout`) more than once, comparing txid hex case-insensitively, with `duplicate UTXO outpoint <txid>:<vout>`. Previously a repeated UTXO could be counted twice in the input total and emitted as two identical inputs, which Dogecoin consensus rejects, or be reported as a skipped input.
 
 ### Security
 
