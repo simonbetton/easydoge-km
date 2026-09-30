@@ -75,6 +75,8 @@ The request uses the same shape as the Rust `ComposeTransactionRequest`: UTXOs u
 
 The result includes selected inputs, skipped inputs, totals, fee, change details, estimated size, actual signed size when complete, unsigned tx hex, signed tx hex when all signatures are present, or a signing envelope when P2PKH or multisig signatures are missing. The reported totals depend on the UTXO values supplied in the request.
 
+Request files and Signing Envelope files larger than 16 MiB are rejected without being parsed. The core limits in [API.md](API.md#limits) apply to their contents.
+
 ### Parity test vector
 
 Examples and the TUI sample mode use the shared vector in [test-vectors/parity.json](../test-vectors/parity.json):

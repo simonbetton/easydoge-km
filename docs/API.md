@@ -198,6 +198,37 @@ stay spendable when enough distinct cosigners sign. If the distinct keys
 cannot reach the threshold (for example a 2-of-2 over one key), the SDK cannot
 finalize that input.
 
+## Limits
+
+The Rust core bounds the size of everything it accepts at a public boundary,
+so Swift, Kotlin, Expo, the CLI, and direct Rust callers inherit the same
+limits. Each limit is checked before any parsing, hashing, key derivation, or
+signature verification, and input over a limit fails with an error that ends
+in `which exceeds the limit of <limit>`. Rust callers can read the numbers
+from `easydoge_km::limits`; they are not exported through UniFFI.
+
+| Limit | Value | Applies to | Basis |
+| --- | --- | --- | --- |
+| `MAX_TRANSACTION_BYTES` | 99,999 bytes | The unsigned transaction of a Signing Envelope or of `sign_p2pkh_transaction` (checked from the hex length before decoding), and the builder's estimated size of the funded transaction | Dogecoin Core 1.14 relays only transactions smaller than 100,000 bytes |
+| `MAX_SCRIPT_BYTES` | 10,000 bytes | `script_pubkey_hex` and `redeem_script_hex` on UTXOs and envelope inputs; `script_hex` on `ExpertRawScript` outputs | Consensus maximum script size |
+| `MAX_REQUEST_UTXOS` | 10,000 | `utxos` in a compose request | SDK policy |
+| `MAX_REQUEST_OUTPUTS` | 3,200 | `outputs` in a compose request | SDK policy |
+| `MAX_SIGNERS_PER_UTXO` | 16 | `signers` on one UTXO | SDK policy |
+| `MAX_ENVELOPE_SIGNATURES_PER_INPUT` | 16 × transaction inputs | `signatures` in a Signing Envelope, counted across the whole envelope | SDK policy |
+| `MAX_ENVELOPES_PER_COMBINE` | 64 | Envelopes passed to one `combine_signing_envelopes` call | SDK policy |
+| `MAX_BASE58CHECK_CHARS` | 112 characters | Every address, WIF, and extended key | Longest extended-key encoding |
+
+Consequences for callers:
+
+- A wallet with more than 10,000 candidate UTXOs must pre-filter before calling the builder, for example by passing its largest UTXOs. A standard transaction spends fewer than 700 P2PKH inputs, so the extra candidates could not all be used anyway.
+- The builder refuses to fund a payment whose estimated size exceeds 99,999 bytes instead of returning a transaction that nodes will not relay. The estimate assumes maximum-size signatures, so it is slightly conservative. This applies to every Coin Selection strategy, including `ManualSelectedInputs`: split a large consolidation into transactions of at most about 670 P2PKH inputs each.
+- To merge more than 64 envelopes, combine them in batches and then combine the results.
+- `validate_address` reports over-long text as not an address; it does not return an error.
+
+Derivation paths need no SDK limit: BIP32 stores the depth in one byte, and deriving past depth 255 fails with `cannot derive child of depth 256 or higher`. Message signing and mnemonic handling do work proportional to the input length and are not limited. P2SH multisig descriptors have their own structural limits, enforced where a descriptor is built or parsed. The CLI additionally refuses request and envelope files larger than 16 MiB; see [CLI.md](CLI.md#compose-and-sign-a-transaction).
+
+The limits bound the work one call can be made to do. They are not rate limiting, a Signing Envelope at the limits can still take seconds to verify, and they do not make a transaction valid or standard in every other respect.
+
 ## Derivation Paths
 
 Account derivation follows Dogecoin BIP44:
