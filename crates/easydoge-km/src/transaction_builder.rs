@@ -8,7 +8,7 @@ use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -16,7 +16,7 @@ use crate::encoding::{base58check_decode, hash160_bytes, wif};
 use crate::keys::{decode_xpriv, derive_path_from_xpriv, WifKey, Xpriv};
 use crate::signing::{
     finalize_signing_envelope, multisig_metadata, p2pkh_pubkey_hash, parse_multisig_redeem_script,
-    sign_signing_envelope, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
+    sign_described_input, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
     SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
     UNCOMPRESSED_MULTISIG_UNSUPPORTED,
 };
@@ -214,7 +214,20 @@ pub struct SkippedInput {
 struct PreparedOutput {
     txout: TxOut,
     spend_value_koinu: u64,
-    script_pubkey_hex: String,
+}
+
+/// Sizes and totals the funding loop keeps up to date while it adds UTXOs,
+/// so each candidate selection is checked without revisiting the UTXOs
+/// already selected or the outputs.
+struct SelectionTotals {
+    /// Sum of `previous_output_value_koinu` over the selected UTXOs.
+    input_total_koinu: u64,
+    /// Sum of `estimated_input_size` over the selected UTXOs.
+    input_bytes: usize,
+    /// Number of spend outputs (fixed for the request).
+    output_count: usize,
+    /// Serialized size of the spend outputs (fixed for the request).
+    output_bytes: usize,
 }
 
 struct FundingResult {
@@ -289,23 +302,28 @@ pub fn compose_and_sign_transaction(
         signatures: vec![],
     };
 
+    // Input i is signed only by the signers listed on UTXO i. The transaction
+    // built above is signed directly: nothing is re-parsed from hex, and the
+    // descriptor of each signed input is validated once.
     for (input_index, utxo) in selected_utxos.iter().enumerate() {
         let signers = resolve_valid_signers(request.network, utxo)?;
-        for signer in signers {
-            let single_input_envelope = SigningEnvelope {
-                version: envelope.version,
-                network: envelope.network,
-                unsigned_tx_hex: envelope.unsigned_tx_hex.clone(),
-                inputs: vec![envelope.inputs[input_index].clone()],
-                signatures: envelope.signatures.clone(),
-            };
-            let signed_partial = sign_signing_envelope(&single_input_envelope, &signer.wif)?;
-            envelope.signatures = signed_partial.signatures;
+        if signers.is_empty() {
+            continue;
         }
+        let signatures = sign_described_input(
+            &tx,
+            request.network,
+            &envelope.inputs[input_index],
+            signers.iter().map(|signer| signer.wif.as_str()),
+        )?;
+        envelope.signatures.extend(signatures);
     }
-    envelope.signatures = dedupe_signatures(envelope.signatures);
 
-    let signed = if envelope_is_complete(&envelope)? {
+    let complete = envelope_is_complete(&envelope)?;
+    // Deliberate self-check: finalizing re-validates the whole envelope and
+    // verifies every signature the loop above produced. It is the only full
+    // validation pass in the builder.
+    let signed = if complete {
         Some(finalize_signing_envelope(&envelope)?)
     } else {
         None
@@ -332,11 +350,7 @@ pub fn compose_and_sign_transaction(
         dust_change_folded_into_fee: funding.dust_change_folded_into_fee,
         unsigned_tx_hex,
         signed_tx_hex: signed.map(|signed| signed.signed_tx_hex),
-        signing_envelope: if envelope_is_complete(&envelope)? {
-            None
-        } else {
-            Some(envelope)
-        },
+        signing_envelope: if complete { None } else { Some(envelope) },
     })
 }
 
@@ -478,10 +492,9 @@ fn prepare_outputs(request: &ComposeTransactionRequest) -> Result<Vec<PreparedOu
             Ok(PreparedOutput {
                 txout: TxOut {
                     value: Amount::from_sat(output.value_koinu),
-                    script_pubkey: script.clone(),
+                    script_pubkey: script,
                 },
                 spend_value_koinu: output.value_koinu,
-                script_pubkey_hex: hex::encode(script.as_bytes()),
             })
         })
         .collect()
@@ -498,6 +511,17 @@ fn fund_transaction(
     let mut selected_indices = Vec::new();
     let mut skipped_inputs = Vec::new();
     let ordered = ordered_utxo_indices(request);
+    // `is_selected[i]` is true once `request.utxos[i]` has been selected.
+    let mut is_selected = vec![false; request.utxos.len()];
+    let mut totals = SelectionTotals {
+        input_total_koinu: 0,
+        input_bytes: 0,
+        output_count: outputs.len(),
+        output_bytes: outputs
+            .iter()
+            .map(|output| serialized_output_size(&output.txout.script_pubkey))
+            .sum(),
+    };
 
     for index in ordered {
         let utxo = &request.utxos[index];
@@ -509,15 +533,21 @@ fn fund_transaction(
         }
         validate_utxo(request.network, utxo)?;
         selected_indices.push(index);
+        is_selected[index] = true;
+        // Keep this order: the value is added before the input is sized, as
+        // when both were recomputed for every candidate selection.
+        totals.input_total_koinu =
+            checked_add(totals.input_total_koinu, utxo.previous_output_value_koinu)?;
+        totals.input_bytes += estimated_input_size(request.network, utxo)?;
         if let Some(funding) =
-            funding_for_selection(request, outputs, &selected_indices, spend_total)?
+            funding_for_selection(request, &selected_indices, &totals, spend_total)?
         {
             skipped_inputs.extend(
                 request
                     .utxos
                     .iter()
                     .enumerate()
-                    .filter(|(candidate, _)| !selected_indices.contains(candidate))
+                    .filter(|(candidate, _)| !is_selected[*candidate])
                     .filter(|(_, candidate)| {
                         request.coin_selection != CoinSelectionStrategy::ManualSelectedInputs
                             || candidate.manually_selected
@@ -539,19 +569,12 @@ fn fund_transaction(
 
 fn funding_for_selection(
     request: &ComposeTransactionRequest,
-    outputs: &[PreparedOutput],
     selected_indices: &[usize],
+    totals: &SelectionTotals,
     spend_total: u64,
 ) -> Result<Option<FundingResult>> {
-    let input_total = selected_indices
-        .iter()
-        .map(|index| request.utxos[*index].previous_output_value_koinu)
-        .try_fold(0u64, checked_add)?;
-    let output_scripts = outputs
-        .iter()
-        .map(|output| output.script_pubkey_hex.as_str())
-        .collect::<Vec<_>>();
-    let no_change_size = estimate_size_bytes(request, selected_indices, &output_scripts, None)?;
+    let input_total = totals.input_total_koinu;
+    let no_change_size = estimate_size_bytes(selected_indices.len(), totals, None)?;
     let no_change_fee = fee_for_size(no_change_size, request.fee_policy.fee_rate_koinu_per_kb)?;
     if input_total < checked_add(spend_total, no_change_fee)? {
         return Ok(None);
@@ -573,12 +596,8 @@ fn funding_for_selection(
     }
 
     let change_script = change_script(request)?;
-    let with_change_size = estimate_size_bytes(
-        request,
-        selected_indices,
-        &output_scripts,
-        Some(&change_script),
-    )?;
+    let with_change_size =
+        estimate_size_bytes(selected_indices.len(), totals, Some(&change_script))?;
     let with_change_fee = fee_for_size(with_change_size, request.fee_policy.fee_rate_koinu_per_kb)?;
     // `None` when the remainder cannot pay for the change output itself. The
     // selection still funds the transaction, so never report it as unfunded.
@@ -608,7 +627,7 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
                 let utxo = &request.utxos[*index];
                 (
                     Reverse(effective_value_scaled(request.network, utxo, fee_rate)),
-                    utxo.txid.clone(),
+                    utxo.txid.as_str(),
                     utxo.vout,
                 )
             });
@@ -618,7 +637,7 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
                 let utxo = &request.utxos[*index];
                 (
                     Reverse(utxo.previous_output_value_koinu),
-                    utxo.txid.clone(),
+                    utxo.txid.as_str(),
                     utxo.vout,
                 )
             });
@@ -628,7 +647,7 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
                 let utxo = &request.utxos[*index];
                 (
                     utxo.previous_output_value_koinu,
-                    utxo.txid.clone(),
+                    utxo.txid.as_str(),
                     utxo.vout,
                 )
             });
@@ -862,15 +881,19 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
 }
 
 fn envelope_is_complete(envelope: &SigningEnvelope) -> Result<bool> {
+    // Group the signatures by input once instead of filtering the whole list
+    // for every input. A group exists only for an input with a signature.
+    let mut signatures_by_input: HashMap<usize, Vec<&SigningEnvelopeSignature>> = HashMap::new();
+    for signature in &envelope.signatures {
+        signatures_by_input
+            .entry(signature.input_index)
+            .or_default()
+            .push(signature);
+    }
     envelope.inputs.iter().try_fold(true, |complete, input| {
-        let matching = envelope
-            .signatures
-            .iter()
-            .filter(|signature| signature.input_index == input.input_index)
-            .collect::<Vec<_>>();
-        if matching.is_empty() {
+        let Some(matching) = signatures_by_input.get(&input.input_index) else {
             return Ok(false);
-        }
+        };
         match input.kind {
             SigningInputKind::P2pkh => Ok(complete),
             SigningInputKind::P2shMultisig => {
@@ -900,25 +923,19 @@ fn envelope_is_complete(envelope: &SigningEnvelope) -> Result<bool> {
 }
 
 fn estimate_size_bytes(
-    request: &ComposeTransactionRequest,
-    selected_indices: &[usize],
-    output_script_hexes: &[&str],
+    input_count: usize,
+    totals: &SelectionTotals,
     change_script: Option<&ScriptBuf>,
 ) -> Result<u64> {
-    let input_count = selected_indices.len();
-    let output_count = output_script_hexes.len() + usize::from(change_script.is_some());
-    let mut size = 4 + varint_len(input_count) + varint_len(output_count) + 4;
-    for index in selected_indices {
-        size += estimated_input_size(request.network, &request.utxos[*index])?;
-    }
-    for script_hex in output_script_hexes {
-        let script_len = hex::decode(script_hex)
-            .map_err(|err| Error::Serialization(format!("invalid script hex: {err}")))?
-            .len();
-        size += 8 + varint_len(script_len) + script_len;
-    }
+    let output_count = totals.output_count + usize::from(change_script.is_some());
+    let mut size = 4
+        + varint_len(input_count)
+        + varint_len(output_count)
+        + 4
+        + totals.input_bytes
+        + totals.output_bytes;
     if let Some(script) = change_script {
-        size += 8 + varint_len(script.len()) + script.len();
+        size += serialized_output_size(script);
     }
     if size > limits::MAX_TRANSACTION_BYTES {
         return Err(Error::InvalidTransaction(format!(
@@ -927,6 +944,12 @@ fn estimate_size_bytes(
         )));
     }
     Ok(size as u64)
+}
+
+/// Serialized size of one transaction output: an 8-byte value, the script
+/// length prefix, and the script.
+fn serialized_output_size(script_pubkey: &ScriptBuf) -> usize {
+    8 + varint_len(script_pubkey.len()) + script_pubkey.len()
 }
 
 fn estimated_input_size(network: Network, utxo: &SpendableUtxo) -> Result<usize> {
@@ -1126,19 +1149,6 @@ fn skipped(utxo: &SpendableUtxo, reason: &str) -> SkippedInput {
         previous_output_value_koinu: utxo.previous_output_value_koinu,
         reason: reason.to_owned(),
     }
-}
-
-fn dedupe_signatures(signatures: Vec<SigningEnvelopeSignature>) -> Vec<SigningEnvelopeSignature> {
-    signatures.into_iter().fold(Vec::new(), |mut unique, sig| {
-        if !unique.iter().any(|existing: &SigningEnvelopeSignature| {
-            existing.input_index == sig.input_index
-                && existing.public_key_hex == sig.public_key_hex
-                && existing.signature_hex == sig.signature_hex
-        }) {
-            unique.push(sig);
-        }
-        unique
-    })
 }
 
 impl From<&SpendableUtxo> for AuditedInput {
