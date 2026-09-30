@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use easydoge_km::{
     account_xpriv_from_mnemonic, address_from_wif, combine_signing_envelopes,
     compose_and_sign_transaction, derive_address_from_xpriv, derive_address_from_xpub,
@@ -13,7 +13,10 @@ use std::fs;
 use std::io;
 use std::str::FromStr;
 
+mod secret_input;
 mod tui;
+
+use secret_input::SecretInput;
 
 #[derive(Parser)]
 #[command(name = "easydoge-km")]
@@ -72,17 +75,31 @@ enum MnemonicCommand {
         #[arg(long, default_value_t = 24)]
         words: usize,
     },
+    #[command(group(ArgGroup::new("phrase_source").required(true).args(["phrase", "phrase_file"])))]
     Validate {
+        /// Seed phrase as a literal value (visible in shell history and process listings; prefer --phrase-file)
         #[arg(long)]
-        phrase: String,
+        phrase: Option<String>,
+        /// Read the seed phrase from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        phrase_file: Option<String>,
         #[arg(long, default_value = "english")]
         language: String,
     },
+    #[command(group(ArgGroup::new("phrase_source").required(true).args(["phrase", "phrase_file"])))]
     ToSeed {
+        /// Seed phrase as a literal value (visible in shell history and process listings; prefer --phrase-file)
         #[arg(long)]
-        phrase: String,
-        #[arg(long)]
+        phrase: Option<String>,
+        /// Read the seed phrase from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        phrase_file: Option<String>,
+        /// BIP39 passphrase as a literal value (visible in shell history and process listings; prefer --passphrase-file)
+        #[arg(long, conflicts_with = "passphrase_file")]
         passphrase: Option<String>,
+        /// Read the BIP39 passphrase from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        passphrase_file: Option<String>,
         #[arg(long, default_value = "english")]
         language: String,
     },
@@ -90,11 +107,20 @@ enum MnemonicCommand {
 
 #[derive(Subcommand)]
 enum XprivCommand {
+    #[command(group(ArgGroup::new("phrase_source").required(true).args(["phrase", "phrase_file"])))]
     FromMnemonic {
+        /// Seed phrase as a literal value (visible in shell history and process listings; prefer --phrase-file)
         #[arg(long)]
-        phrase: String,
-        #[arg(long)]
+        phrase: Option<String>,
+        /// Read the seed phrase from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        phrase_file: Option<String>,
+        /// BIP39 passphrase as a literal value (visible in shell history and process listings; prefer --passphrase-file)
+        #[arg(long, conflicts_with = "passphrase_file")]
         passphrase: Option<String>,
+        /// Read the BIP39 passphrase from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        passphrase_file: Option<String>,
         #[arg(long, default_value = "english")]
         language: String,
         #[arg(long, default_value = "mainnet")]
@@ -102,31 +128,51 @@ enum XprivCommand {
         #[arg(long, default_value_t = 0)]
         account: u32,
     },
+    #[command(group(ArgGroup::new("xpriv_source").required(true).args(["xpriv", "xpriv_file"])))]
     Inspect {
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
-        xpriv: String,
+        xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
+    #[command(group(ArgGroup::new("xpriv_source").required(true).args(["xpriv", "xpriv_file"])))]
     DeriveAddress {
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
-        xpriv: String,
+        xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long)]
         path: String,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
+    #[command(group(ArgGroup::new("xpriv_source").required(true).args(["xpriv", "xpriv_file"])))]
     Derive {
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
-        xpriv: String,
+        xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long)]
         path: String,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
+    #[command(group(ArgGroup::new("xpriv_source").required(true).args(["xpriv", "xpriv_file"])))]
     ToXpub {
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
-        xpriv: String,
+        xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
@@ -152,11 +198,16 @@ enum XpubCommand {
 
 #[derive(Subcommand)]
 enum AddressCommand {
+    #[command(group(ArgGroup::new("key_source").required(true).args(["xpub", "xpriv", "xpriv_file"])))]
     Derive {
         #[arg(long)]
         xpub: Option<String>,
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
         xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long)]
         path: String,
         #[arg(long, default_value = "mainnet")]
@@ -172,15 +223,25 @@ enum AddressCommand {
 
 #[derive(Subcommand)]
 enum WifCommand {
+    #[command(group(ArgGroup::new("xpriv_source").required(true).args(["xpriv", "xpriv_file"])))]
     Export {
+        /// Extended private key as a literal value (visible in shell history and process listings; prefer --xpriv-file)
         #[arg(long)]
-        xpriv: String,
+        xpriv: Option<String>,
+        /// Read the extended private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        xpriv_file: Option<String>,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
+    #[command(group(ArgGroup::new("wif_source").required(true).args(["wif", "wif_file"])))]
     Import {
+        /// WIF private key as a literal value (visible in shell history and process listings; prefer --wif-file)
         #[arg(long)]
-        wif: String,
+        wif: Option<String>,
+        /// Read the WIF private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        wif_file: Option<String>,
         #[arg(long, default_value = "mainnet")]
         network: String,
     },
@@ -200,11 +261,16 @@ enum MultisigCommand {
         #[arg(long, default_value_t = true)]
         sorted: bool,
     },
+    #[command(group(ArgGroup::new("wif_source").required(true).args(["wif", "wif_file"])))]
     Sign {
         #[arg(long)]
         envelope_file: String,
+        /// WIF private key as a literal value (visible in shell history and process listings; prefer --wif-file)
         #[arg(long)]
-        wif: String,
+        wif: Option<String>,
+        /// Read the WIF private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        wif_file: Option<String>,
     },
     Combine {
         #[arg(long = "envelope-file")]
@@ -218,6 +284,7 @@ enum MultisigCommand {
 
 #[derive(Subcommand)]
 enum TxCommand {
+    #[command(group(ArgGroup::new("wif_source").required(true).args(["wif", "wif_file"])))]
     SignP2pkh {
         #[arg(long)]
         unsigned_tx_hex: String,
@@ -225,8 +292,12 @@ enum TxCommand {
         input_index: usize,
         #[arg(long)]
         script_pubkey_hex: String,
+        /// WIF private key as a literal value (visible in shell history and process listings; prefer --wif-file)
         #[arg(long)]
-        wif: String,
+        wif: Option<String>,
+        /// Read the WIF private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        wif_file: Option<String>,
         #[arg(long, default_value = "mainnet")]
         network: String,
         #[arg(long, default_value_t = 1)]
@@ -240,9 +311,14 @@ enum TxCommand {
 
 #[derive(Subcommand)]
 enum MessageCommand {
+    #[command(group(ArgGroup::new("wif_source").required(true).args(["wif", "wif_file"])))]
     Sign {
+        /// WIF private key as a literal value (visible in shell history and process listings; prefer --wif-file)
         #[arg(long)]
-        wif: String,
+        wif: Option<String>,
+        /// Read the WIF private key from this file, or from standard input when the path is "-"
+        #[arg(long, value_name = "PATH")]
+        wif_file: Option<String>,
         #[arg(long)]
         message: String,
         #[arg(long, default_value = "mainnet")]
@@ -296,14 +372,26 @@ fn handle_mnemonic(command: MnemonicCommand, json: bool, reveal: bool) -> Result
                 Ok(())
             }
         }
-        MnemonicCommand::Validate { phrase, language } => print_json(serde_json::json!({
-            "valid": validate_mnemonic(&phrase, Language::from_str(&language)?)?
-        })),
-        MnemonicCommand::ToSeed {
+        MnemonicCommand::Validate {
             phrase,
-            passphrase,
+            phrase_file,
             language,
         } => {
+            let phrase = SecretInput::default().required("phrase", phrase, phrase_file)?;
+            print_json(serde_json::json!({
+                "valid": validate_mnemonic(&phrase, Language::from_str(&language)?)?
+            }))
+        }
+        MnemonicCommand::ToSeed {
+            phrase,
+            phrase_file,
+            passphrase,
+            passphrase_file,
+            language,
+        } => {
+            let mut secrets = SecretInput::default();
+            let phrase = secrets.required("phrase", phrase, phrase_file)?;
+            let passphrase = secrets.optional("passphrase", passphrase, passphrase_file)?;
             let seed_hex = mnemonic_to_seed_hex(
                 &phrase,
                 passphrase.as_deref(),
@@ -322,11 +410,16 @@ fn handle_xpriv(command: XprivCommand, json: bool, reveal: bool) -> Result<()> {
     match command {
         XprivCommand::FromMnemonic {
             phrase,
+            phrase_file,
             passphrase,
+            passphrase_file,
             language,
             network,
             account,
         } => {
+            let mut secrets = SecretInput::default();
+            let phrase = secrets.required("phrase", phrase, phrase_file)?;
+            let passphrase = secrets.optional("passphrase", passphrase, passphrase_file)?;
             let keys = account_xpriv_from_mnemonic(
                 &phrase,
                 passphrase.as_deref(),
@@ -345,7 +438,12 @@ fn handle_xpriv(command: XprivCommand, json: bool, reveal: bool) -> Result<()> {
                 Ok(())
             }
         }
-        XprivCommand::Inspect { xpriv, network } => {
+        XprivCommand::Inspect {
+            xpriv,
+            xpriv_file,
+            network,
+        } => {
+            let xpriv = SecretInput::default().required("xpriv", xpriv, xpriv_file)?;
             let value = inspect_xpriv(&Xpriv {
                 network: Network::from_str(&network)?,
                 encoded: xpriv,
@@ -354,9 +452,11 @@ fn handle_xpriv(command: XprivCommand, json: bool, reveal: bool) -> Result<()> {
         }
         XprivCommand::DeriveAddress {
             xpriv,
+            xpriv_file,
             path,
             network,
         } => {
+            let xpriv = SecretInput::default().required("xpriv", xpriv, xpriv_file)?;
             let value = derive_address_from_xpriv(
                 &Xpriv {
                     network: Network::from_str(&network)?,
@@ -373,9 +473,11 @@ fn handle_xpriv(command: XprivCommand, json: bool, reveal: bool) -> Result<()> {
         }
         XprivCommand::Derive {
             xpriv,
+            xpriv_file,
             path,
             network,
         } => {
+            let xpriv = SecretInput::default().required("xpriv", xpriv, xpriv_file)?;
             let value = derive_path_from_xpriv(
                 &Xpriv {
                     network: Network::from_str(&network)?,
@@ -390,7 +492,12 @@ fn handle_xpriv(command: XprivCommand, json: bool, reveal: bool) -> Result<()> {
             };
             print_json(output)
         }
-        XprivCommand::ToXpub { xpriv, network } => {
+        XprivCommand::ToXpub {
+            xpriv,
+            xpriv_file,
+            network,
+        } => {
+            let xpriv = SecretInput::default().required("xpriv", xpriv, xpriv_file)?;
             let value = xpub_from_xpriv(&Xpriv {
                 network: Network::from_str(&network)?,
                 encoded: xpriv,
@@ -441,10 +548,12 @@ fn handle_address(command: AddressCommand, json: bool) -> Result<()> {
         AddressCommand::Derive {
             xpub,
             xpriv,
+            xpriv_file,
             path,
             network,
         } => {
             let network = Network::from_str(&network)?;
+            let xpriv = SecretInput::default().optional("xpriv", xpriv, xpriv_file)?;
             let value = match (xpub, xpriv) {
                 (Some(xpub), None) => derive_address_from_xpub(
                     &Xpub {
@@ -460,7 +569,7 @@ fn handle_address(command: AddressCommand, json: bool) -> Result<()> {
                     },
                     &path,
                 )?,
-                _ => anyhow::bail!("provide exactly one of --xpub or --xpriv"),
+                _ => anyhow::bail!("provide exactly one of --xpub, --xpriv, or --xpriv-file"),
             };
             if json {
                 print_json(serde_json::to_value(value)?)
@@ -477,7 +586,12 @@ fn handle_address(command: AddressCommand, json: bool) -> Result<()> {
 
 fn handle_wif(command: WifCommand, json: bool, reveal: bool) -> Result<()> {
     match command {
-        WifCommand::Export { xpriv, network } => {
+        WifCommand::Export {
+            xpriv,
+            xpriv_file,
+            network,
+        } => {
+            let xpriv = SecretInput::default().required("xpriv", xpriv, xpriv_file)?;
             let wif = wif_from_xpriv(&Xpriv {
                 network: Network::from_str(&network)?,
                 encoded: xpriv,
@@ -497,7 +611,12 @@ fn handle_wif(command: WifCommand, json: bool, reveal: bool) -> Result<()> {
                 Ok(())
             }
         }
-        WifCommand::Import { wif, network } => {
+        WifCommand::Import {
+            wif,
+            wif_file,
+            network,
+        } => {
+            let wif = SecretInput::default().required("wif", wif, wif_file)?;
             let value = address_from_wif(Network::from_str(&network)?, &wif)?;
             print_json(serde_json::to_value(value)?)
         }
@@ -527,7 +646,12 @@ fn handle_multisig(command: MultisigCommand, json: bool) -> Result<()> {
                 Ok(())
             }
         }
-        MultisigCommand::Sign { envelope_file, wif } => {
+        MultisigCommand::Sign {
+            envelope_file,
+            wif,
+            wif_file,
+        } => {
+            let wif = SecretInput::default().required("wif", wif, wif_file)?;
             let envelope = read_envelope(&envelope_file)?;
             print_json(serde_json::to_value(sign_signing_envelope(
                 &envelope, &wif,
@@ -556,9 +680,11 @@ fn handle_tx(command: TxCommand, json: bool) -> Result<()> {
             input_index,
             script_pubkey_hex,
             wif,
+            wif_file,
             network,
             sighash_type,
         } => {
+            let wif = SecretInput::default().required("wif", wif, wif_file)?;
             let signed = sign_p2pkh_transaction(
                 Network::from_str(&network)?,
                 &unsigned_tx_hex,
@@ -591,9 +717,11 @@ fn handle_message(command: MessageCommand, json: bool, reveal: bool) -> Result<(
     match command {
         MessageCommand::Sign {
             wif,
+            wif_file,
             message,
             network,
         } => {
+            let wif = SecretInput::default().required("wif", wif, wif_file)?;
             let signature = sign_message(Network::from_str(&network)?, &wif, &message)?;
             let mut value = serde_json::to_value(signature)?;
             if !reveal {
