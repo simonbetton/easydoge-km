@@ -2,7 +2,7 @@
 
 Dogecoin key-management SDK for self-custodial products.
 
-EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin bindings, an Expo React Native bridge, and an engineer CLI/TUI. Shared fixtures exercise the Rust core, UniFFI, Swift, and Kotlin wrappers. Expo native integration and device storage behavior are not covered by the workspace verification suite; see the [security model](docs/SECURITY_MODEL.md) for current limitations.
+EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin bindings, an Expo React Native bridge, and an engineer CLI/TUI. Shared fixtures exercise the Rust core, UniFFI, Swift, and Kotlin wrappers. The Expo native modules are compiled by a separate host-app build check but are not run by any automated test, and device storage behavior is not covered; see the [security model](docs/SECURITY_MODEL.md) for current limitations.
 
 ## Workspace
 
@@ -118,7 +118,7 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [SECURITY.md](SECURITY.
 - Native build input pin checks (Gradle distribution checksum, no dynamic dependency versions)
 - Android/Kotlin Gradle tests
 
-The shell syntax check covers every script under `scripts/`. Gradle tests run when the wrapper is executable. The suite regenerates the committed binding sources and fails if they differ from the git index, so stage regenerated bindings after an intentional FFI or UniFFI change. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.
+The shell syntax check covers every script under `scripts/`. Gradle tests run when the wrapper is executable. The suite regenerates the committed binding sources and fails if they differ from the git index, so stage regenerated bindings after an intentional FFI or UniFFI change. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. `./scripts/verify-expo-native.sh` (the `Expo Native` CI workflow) compiles them inside a minimal host app and needs Xcode, CocoaPods, the Android SDK and NDK, and `cargo-ndk`. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.
 
 ## Releasing
 

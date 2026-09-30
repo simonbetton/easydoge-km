@@ -6,7 +6,7 @@ The API, wire formats, and known limitations are documented in the [API guide](h
 
 ## Requirements
 
-- Expo SDK 53 or newer in a development build or EAS build. Expo Go cannot load this module.
+- Expo SDK 53 or newer in a development build or EAS build. Expo Go cannot load this module. The repository's host-app build check uses Expo SDK 57; older SDKs in the range are not built by it.
 - iOS deployment target 16.4 or newer. Expo SDK 53, 54, and 55 default to 15.1, and autolinking skips pods whose deployment target is higher than the app's; raise it with `expo-build-properties` (`ios.deploymentTarget: "16.4"`).
 - Android `minSdkVersion` 24 or newer.
 

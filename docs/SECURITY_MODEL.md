@@ -64,7 +64,7 @@ Applications remain responsible for backup UX, user authentication policy, devic
 
 ## Verification Limits
 
-The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrapper tests, Kotlin JVM wrapper tests, and numeric and enum codec tests. Expo receives a TypeScript check against a local declaration. The suite does not compile the Expo native modules, test device Keychain/Keystore authentication or process-death recovery, or build mobile release artifacts. Passing it is not evidence of an independent security audit or production readiness.
+The workspace suite runs Rust tests, independent bitcoinjs vectors, Swift wrapper tests, Kotlin JVM wrapper tests, and numeric and enum codec tests. Expo receives a TypeScript check against a local declaration. The suite does not compile the Expo native modules, test device Keychain/Keystore authentication or process-death recovery, or build mobile release artifacts. A separate check, `scripts/verify-expo-native.sh` (the `Expo Native` CI workflow), installs the packed Expo package into a minimal Expo host app and compiles and links both native modules for iOS and Android. It never launches the app, so no automated check executes an Expo bridge call, a Keychain/Keystore operation, or an authentication prompt. Passing either check is not evidence of an independent security audit or production readiness.
 
 ## Operational Requirements
 

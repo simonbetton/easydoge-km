@@ -23,7 +23,7 @@ Run:
 
 Run the full suite on macOS. It checks required repository files/metadata, Rust formatting and tests, bitcoinjs cross-checks, Clippy, Rust builds/docs, generated UniFFI bindings, Swift tests, Expo TypeScript, and Kotlin JVM tests when the Gradle wrapper is executable. It syntax-checks every script under `scripts/`, regenerates the committed binding sources, and fails if they differ from the git index (what is staged; in a clean checkout, the commit itself).
 
-It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. A passing suite is not a security audit or proof of reproducible release binaries.
+It does not compile or run Expo native modules, exercise device storage/authentication, or build mobile release artifacts. `./scripts/verify-expo-native.sh` compiles the Expo native modules in a host app built from the packed tarball; run it before publishing the Expo package. A passing suite is not a security audit or proof of reproducible release binaries.
 
 ## Dependency Advisories
 
@@ -124,7 +124,7 @@ Before distributing mobile packages, complete and verify their native integratio
 
 `pack-expo-package.sh` runs `npm pack` in `bindings/expo`. The package's `prepack` script, `scripts/prepare-expo-package.sh`, compiles the TypeScript, copies the Swift and Kotlin wrappers, the generated UniFFI sources, the XCFramework, and the Android `jniLibs` into git-ignored directories inside the package, and writes `vendor-manifest.json` with the source commit and SHA-256 digests. It refuses to run when a native artifact is missing, is older than the Rust sources, or was built from different UniFFI headers. The pack script then checks the tarball against a required list, an allowlist, and a size budget, and prints the tarball path under `dist/expo/`. Set `EXPO_PACKAGE_BUILD_NATIVE=1` to run both native build helpers first.
 
-A verified tarball is not proof that the module builds inside an app. Install the tarball into an Expo development build on each platform before publishing.
+A verified tarball is not proof that the module builds inside an app. `./scripts/verify-expo-native.sh` packs the tarball, installs it into the fixture app under `tools/expo-fixture` (Expo SDK 57), and builds that app for the iOS simulator, an unsigned iOS device target, and an Android debug APK; the `Expo Native` CI workflow runs the same script. That check does not launch the app: exercise the module in an Expo development build on each platform before publishing.
 
 ## Publishing Order
 

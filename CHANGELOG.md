@@ -11,6 +11,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - Added a Ratatui paste inspector for Dogecoin addresses, seed phrases, extended keys, and WIFs.
 - Kotlin: `WalletAuthenticator` and the ready-made `BiometricPromptWalletAuthenticator`, which binds the stored-wallet cipher to an AndroidX `BiometricPrompt`. The Kotlin library now depends on `androidx.biometric:biometric:1.1.0`.
 - Added `scripts/prepare-expo-package.sh` and `scripts/pack-expo-package.sh`, which assemble and verify a self-contained `@easydoge/km-expo` npm tarball: compiled JavaScript, the Swift and Kotlin wrappers, the generated UniFFI sources, the Apple XCFramework, and Android `jniLibs`.
+- Added `scripts/verify-expo-native.sh`, the `tools/expo-fixture` host app (Expo SDK 57), and the `Expo Native` CI workflow. They pack `@easydoge/km-expo`, install the tarball into the host app, and compile and link both native modules for iOS (simulator and an unsigned device build) and Android. The check does not launch the app.
 
 ### Changed
 

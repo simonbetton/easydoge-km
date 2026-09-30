@@ -13,7 +13,7 @@ Install:
 - Bash and ripgrep for the verification scripts
 - Android SDK platform 36, with `ANDROID_HOME` or `bindings/kotlin/local.properties` pointing to the SDK
 
-Run the full suite on macOS with an Apple development toolchain: the Swift storage implementation imports Security and LocalAuthentication. The Android NDK and `cargo-ndk` are needed only for native Android artifact builds.
+Run the full suite on macOS with an Apple development toolchain: the Swift storage implementation imports Security and LocalAuthentication. The Android NDK and `cargo-ndk` are needed only for native Android artifact builds and for `./scripts/verify-expo-native.sh`, which also needs CocoaPods and network access.
 
 Then run:
 
@@ -21,7 +21,9 @@ Then run:
 ./scripts/verify.sh
 ```
 
-This regenerates the committed UniFFI sources and fails if the result differs from what is staged or committed. After an intentional change to the FFI surface (`crates/easydoge-km-ffi/src/lib.rs`) or to the UniFFI version, run `./scripts/generate-bindings.sh`, review the diff, and stage the regenerated files with `git add -- $(./scripts/generate-bindings.sh --print-committed-paths)` before re-running the suite. Expo verification is TypeScript-only; the native Expo modules and device storage/authentication flows require separate integration tests. Kotlin tests use the host Rust library, not an Android device. The suite syntax-checks every script under `scripts/`.
+This regenerates the committed UniFFI sources and fails if the result differs from what is staged or committed. After an intentional change to the FFI surface (`crates/easydoge-km-ffi/src/lib.rs`) or to the UniFFI version, run `./scripts/generate-bindings.sh`, review the diff, and stage the regenerated files with `git add -- $(./scripts/generate-bindings.sh --print-committed-paths)` before re-running the suite. In this suite Expo verification is TypeScript-only; `./scripts/verify-expo-native.sh` compiles the native Expo modules, and device storage/authentication flows require separate integration tests. Kotlin tests use the host Rust library, not an Android device. The suite syntax-checks every script under `scripts/`.
+
+To compile the Expo native modules, run `./scripts/verify-expo-native.sh` (add `ios` or `android` to build one platform). It builds the Rust libraries for every Apple slice and Android ABI, packs `@easydoge/km-expo`, installs the tarball into a throwaway copy of the fixture app in `tools/expo-fixture` (Expo SDK 57) under `dist/expo-fixture`, and builds that app for the iOS simulator, an unsigned iOS device target, and an Android debug APK. It needs macOS with Xcode, CocoaPods, JDK 17, the Android SDK and NDK, `cargo-ndk`, and network access, takes several minutes, and is not part of `./scripts/verify.sh`. The `Expo Native` CI workflow runs it for pull requests that touch `bindings/`, `crates/`, `scripts/`, or the fixture, and for every push to `main`.
 
 ## Development Rules
 
