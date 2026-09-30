@@ -85,12 +85,12 @@ Real secrets should come from a protected file or standard input, never from a l
 - Rust backend services use the `easydoge-km` crate directly.
 - iOS apps can integrate the Swift sources under `bindings/swift` with a matching native library.
 - Android apps can integrate the Kotlin library under `bindings/kotlin` with native libraries for their target ABIs.
-- Expo apps can integrate the native module sources under `bindings/expo` in custom dev-client or EAS builds; Expo Go is unsupported.
+- Expo apps install the `@easydoge/km-expo` tarball built from `bindings/expo` by `scripts/pack-expo-package.sh` in custom dev-client or EAS builds; Expo Go is unsupported.
 - Engineers can use the CLI binary and Ratatui TUI from `crates/easydoge-km-cli`.
 
 See [docs/API.md](docs/API.md) for the parity table and examples, and [docs/CLI.md](docs/CLI.md) for CLI/TUI usage.
 
-The mobile packages currently rely on workspace paths and separately built native libraries. See [bindings/README.md](bindings/README.md) for integration requirements; they are not standalone binary distributions.
+The Swift and Kotlin packages currently rely on workspace paths and separately built native libraries; they are not standalone binary distributions. The Expo package is assembled into a self-contained npm tarball at pack time. Nothing is published to a registry yet. See [bindings/README.md](bindings/README.md) for integration requirements.
 
 ## Security Boundary
 
@@ -126,6 +126,8 @@ Release steps are documented in [docs/RELEASE.md](docs/RELEASE.md). Native artif
 
 - `scripts/build-apple-xcframework.sh`
 - `scripts/build-android-native-libs.sh`
+- `scripts/prepare-expo-package.sh`
+- `scripts/pack-expo-package.sh`
 - `scripts/package-release.sh`
 
 ## Contributing

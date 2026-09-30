@@ -37,7 +37,7 @@ Koinu amounts cross the bridge as decimal strings; use `koinuFromBigInt` and `ko
 
 - `build/`: compiled JavaScript and TypeScript declarations.
 - `ios/`: the Expo module source and three CocoaPods specs. `EasyDogeKMFFI` (Swift module `easydoge_km_ffi`) holds the generated UniFFI Swift and the prebuilt XCFramework, `EasyDogeKM` holds the Swift wrapper and Keychain adapter, and `EasyDogeKMExpo` holds the Expo module.
-- `android/`: one Gradle library project with the Expo module source, the Kotlin wrapper, the generated UniFFI Kotlin, and `jniLibs` for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. It links JNA.
+- `android/`: one Gradle library project with the Expo module source, the Kotlin wrapper, the generated UniFFI Kotlin, and `jniLibs` for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. It links JNA and `androidx.biometric`, so the app must keep AndroidX enabled (the Expo default).
 - `vendor-manifest.json`: the source commit and a SHA-256 digest for every vendored file.
 
 The native libraries are prebuilt from the Rust workspace. Bit-for-bit reproducibility of those binaries is not verified.

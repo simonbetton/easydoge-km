@@ -10,6 +10,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 - Added a Ratatui paste inspector for Dogecoin addresses, seed phrases, extended keys, and WIFs.
 - Kotlin: `WalletAuthenticator` and the ready-made `BiometricPromptWalletAuthenticator`, which binds the stored-wallet cipher to an AndroidX `BiometricPrompt`. The Kotlin library now depends on `androidx.biometric:biometric:1.1.0`.
+- Added `scripts/prepare-expo-package.sh` and `scripts/pack-expo-package.sh`, which assemble and verify a self-contained `@easydoge/km-expo` npm tarball: compiled JavaScript, the Swift and Kotlin wrappers, the generated UniFFI sources, the Apple XCFramework, and Android `jniLibs`.
 
 ### Changed
 
@@ -29,6 +30,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 - **Breaking (Kotlin)**: `StoredWalletRecord` has a new required `protection` property, persisted as a `mode=` line in the record file; records without it load as `NoPrompt`. `AndroidKeystoreWalletSecretStore`, `persistent(context, authenticator)` and `inMemory(authenticator)` accept an optional `WalletAuthenticator`.
 - The Compose-and-Sign Transaction Builder and Signing Envelope validation no longer repeat work on large requests: each selected UTXO and each output is sized once, selected inputs are signed without re-parsing and re-validating the unsigned transaction for every signer, and each input's signature hash is computed once per validation and shared by every signature on that input. Results, error messages, and signature order are unchanged. On the development machine, validating the most expensive Signing Envelope the limits allow (2,437 inputs with 16 signatures each) dropped from about 8 s to about 1 s, and composing and signing 600 inputs that each list 16 signers from about 5 s to about 0.6 s. Signing or validating `n` inputs still costs `n` whole-transaction hashes, which is inherent in legacy signature hashing.
 - **Breaking (Rust)**: `Xpriv`, `GeneratedMnemonic`, and `UtxoSigner` now implement `Zeroize`, `ZeroizeOnDrop`, and therefore `Drop`. Code that moves a field out of one of them (`let text = xpriv.encoded;`), destructures one by value, or uses one as the base of struct-update syntax no longer compiles; use `std::mem::take(&mut xpriv.encoded)`, clone the field, or borrow it. Field names and types, serde output, the Swift, Kotlin, and Expo APIs, and the generated bindings are unchanged.
+- **Breaking (Expo)**: the Expo package no longer depends on workspace paths. iOS autolinks three pods from the package (`EasyDogeKMFFI`, `EasyDogeKM`, `EasyDogeKMExpo`), Android compiles the vendored Kotlin sources in the module's own Gradle project with JNA, `androidx.biometric`, and `expo-module-gradle-plugin`, the JavaScript imports `requireNativeModule` from `expo`, and the package requires Expo SDK 53 or newer. Builds that included this repository's `:easydoge-km` Gradle project or a workspace `target/release` linker path must switch to the packed tarball.
 
 ### Fixed
 

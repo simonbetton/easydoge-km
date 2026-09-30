@@ -50,7 +50,7 @@ Dependabot version updates watch the harness's direct dependencies only. Advisor
 
 `bindings/kotlin/gradlew` is a repository-specific launcher, not the stock Gradle wrapper, and no `gradle-wrapper.jar` is committed. It downloads the distribution named by `distributionUrl` in `bindings/kotlin/gradle/wrapper/gradle-wrapper.properties`, compares its SHA-256 with `distributionSha256Sum` before extracting anything, and refuses to run when the checksum is missing or different. It needs `curl`, `unzip`, and `sha256sum` or `shasum`. Verified distributions are extracted under `<Gradle user home>/wrapper/dists/<distribution>/sha256-<checksum>/`; a tree extracted by an older launcher is never reused and can be deleted once no checkout uses it.
 
-`scripts/check-native-build-pins.sh`, which `verify.sh` runs, tests the launcher offline against a fake distribution (it needs `zip`) and rejects dynamic dependency versions such as `+` in the Kotlin and Expo Android build files. The Expo Android module depends on the host build's `:expo-modules-core` project, so the app's package lockfile decides its version.
+`scripts/check-native-build-pins.sh`, which `verify.sh` runs, tests the launcher offline against a fake distribution (it needs `zip`) and rejects dynamic dependency versions such as `+` in the Kotlin and Expo Android build files. The Expo Android module gets the host build's `:expo-modules-core` project through `expo-module-gradle-plugin`, so the app's package lockfile decides its version.
 
 To change the Gradle version:
 
@@ -67,8 +67,7 @@ Update all package versions together:
 
 - Rust crates under `crates/*/Cargo.toml`
 - Internal `easydoge-km` dependency versions in the CLI and FFI manifests, plus the resolved `Cargo.lock`
-- Expo package under `bindings/expo/package.json`
-- Expo iOS podspec under `bindings/expo/ios/EasyDogeKMExpo.podspec`
+- Expo package under `bindings/expo/package.json` (the podspecs in `bindings/expo/ios/` and `bindings/expo/android/build.gradle` read their version from it)
 - Android Gradle package metadata, once publishing is enabled
 - `CHANGELOG.md`
 
@@ -111,15 +110,29 @@ Build helpers:
 
 The Apple helper rebuilds `dist/apple/` and creates `dist/apple/easydoge_km_ffi.xcframework` for arm64 iOS devices and arm64/x86_64 simulators. The Android helper writes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` libraries under `bindings/kotlin/easydoge-km/src/main/jniLibs`, targeting API 24 by default (`ANDROID_API` overrides it). Neither helper publishes a package or creates CLI binaries/checksums.
 
-Before distributing mobile packages, complete and verify their native integration. The Swift manifest uses a workspace `target/debug` linker path rather than an XCFramework binary target. Expo Android expects an included `:easydoge-km` Gradle project. The Expo podspec uses a workspace `target/release` path, does not declare the `EasyDogeKM` Swift module it imports, and its `ios/**/*` source glob is nested relative to a podspec already inside `ios/`. These are integration gaps, not steps automatically handled by the artifact scripts. See [bindings/README.md](../bindings/README.md).
+Before distributing mobile packages, complete and verify their native integration. The Swift manifest uses a workspace `target/debug` linker path rather than an XCFramework binary target; that is an integration gap the artifact scripts do not handle. The Expo package is assembled from the artifacts above by `scripts/pack-expo-package.sh`, described below. See [bindings/README.md](../bindings/README.md).
+
+## Expo Package
+
+`@easydoge/km-expo` is assembled at pack time; nothing it vendors is committed.
+
+```sh
+./scripts/build-apple-xcframework.sh
+./scripts/build-android-native-libs.sh
+./scripts/pack-expo-package.sh
+```
+
+`pack-expo-package.sh` runs `npm pack` in `bindings/expo`. The package's `prepack` script, `scripts/prepare-expo-package.sh`, compiles the TypeScript, copies the Swift and Kotlin wrappers, the generated UniFFI sources, the XCFramework, and the Android `jniLibs` into git-ignored directories inside the package, and writes `vendor-manifest.json` with the source commit and SHA-256 digests. It refuses to run when a native artifact is missing, is older than the Rust sources, or was built from different UniFFI headers. The pack script then checks the tarball against a required list, an allowlist, and a size budget, and prints the tarball path under `dist/expo/`. Set `EXPO_PACKAGE_BUILD_NATIVE=1` to run both native build helpers first.
+
+A verified tarball is not proof that the module builds inside an app. Install the tarball into an Expo development build on each platform before publishing.
 
 ## Publishing Order
 
 1. Choose a version, update manifests/internal dependencies and release notes, review the security limitations, and check the [dependency advisories](#dependency-advisories).
 2. Commit the release changes, then run `./scripts/package-release.sh` from that checkout. It refuses to start unless `git status --porcelain` is empty (no staged, unstaged, or untracked files), runs the full verification suite including the generated-binding identity check, confirms verification left the checkout clean, and runs `cargo package -p easydoge-km` without `--allow-dirty`; it does not publish.
 3. Complete the mobile integration described above, build target artifacts, and test the consuming iOS, Android, and Expo apps, including storage/authentication and recovery behavior.
-4. Build Expo JavaScript and declarations (`pnpm --dir bindings/expo install`, then `pnpm --dir bindings/expo run build`) and inspect the npm package contents. The workspace typecheck uses `--noEmit`, and the package has no automatic pre-publish build script.
-5. Create a signed git tag for the verified release commit. If using the current Expo podspec, its source tag is the bare version (for example `0.1.0`); keep the tag and podspec consistent.
+4. Build the native artifacts and run `./scripts/pack-expo-package.sh`. It builds the Expo JavaScript and declarations, vendors the native sources and binaries, and verifies the tarball. Publish the tarball it prints (`npm publish <tarball>`), not the working directory.
+5. Create a signed git tag for the verified release commit. The Expo podspecs name the bare version as their source tag (for example `0.1.0`); keep the tag and the package version consistent.
 6. Publish `easydoge-km` and wait for that version to be available in the registry.
 7. Run `PACKAGE_DEPENDENT_CRATES=1 ./scripts/package-release.sh` to package-check the FFI and CLI crates against the published core, then publish those crates.
 8. Publish the validated mobile packages and attach native artifacts, CLI binaries, checksums, and migration notes to the GitHub release. Publishing is manual; the current CI workflow only verifies the workspace.
