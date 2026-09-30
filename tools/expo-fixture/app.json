@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "EasyDogeKMFixture",
+    "slug": "easydoge-km-expo-fixture",
+    "version": "0.0.0",
+    "ios": {
+      "bundleIdentifier": "io.easydoge.km.fixture"
+    },
+    "android": {
+      "package": "io.easydoge.km.fixture"
+    }
+  }
+}

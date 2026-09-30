@@ -14,6 +14,9 @@ node_modules
 /bindings/expo/*.tgz
 /bindings/generated/
 /tools/bitcoinjs-cross-check/node_modules/
+/tools/expo-fixture/ios/
+/tools/expo-fixture/android/
+/tools/expo-fixture/.expo/
 /bindings/kotlin/.gradle/
 /bindings/kotlin/**/build/
 /bindings/swift/.build/
