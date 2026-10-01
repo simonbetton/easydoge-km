@@ -15,22 +15,32 @@
   "bugs": {
     "url": "https://github.com/simonbetton/easydoge-km/issues"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
-    "android",
+    "android/build.gradle",
+    "android/proguard-rules.pro",
+    "android/src/main",
+    "android/vendor",
     "build",
-    "ios",
     "expo-module.config.json",
-    "package.json"
+    "ios/*.podspec",
+    "ios/*.swift",
+    "ios/vendor",
+    "vendor-manifest.json"
   ],
   "exports": {
     ".": {
       "types": "./build/index.d.ts",
       "default": "./build/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json --noEmit"
+    "test": "tsc -p tsconfig.json --noEmit",
+    "prepack": "bash ../../scripts/prepare-expo-package.sh"
   },
   "keywords": [
     "dogecoin",
@@ -39,9 +49,11 @@
     "wallet",
     "keys"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "peerDependencies": {
-    "expo": "*",
-    "expo-modules-core": "*",
+    "expo": ">=53.0.0",
     "react-native": "*"
   },
   "devDependencies": {

@@ -1,0 +1,99 @@
+name: Expo Native
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/expo-native.yml"
+      - "bindings/**"
+      - "crates/**"
+      - "scripts/**"
+      - "tools/expo-fixture/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: expo-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  expo-native:
+    name: Compile Expo Native Modules
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: tools/expo-fixture/package-lock.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tools/expo-fixture/package-lock.json
+
+      - name: Cache CocoaPods downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: expo-native-pods-${{ runner.os }}-${{ hashFiles('tools/expo-fixture/package-lock.json') }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Install the Android NDK and CMake the host app uses
+        run: |
+          sdkmanager="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n 1)"
+          "$sdkmanager" --install "ndk;27.1.12297006" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          pod --version
+          node --version
+          npm --version
+          java -version
+          cargo --version
+          cargo ndk --version
+
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Compile Expo native modules
+        run: ./scripts/verify-expo-native.sh
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: expo-native-logs
+          path: dist/expo-fixture/logs
+          if-no-files-found: ignore

@@ -1,19 +1,33 @@
 plugins {
   id 'com.android.library'
-  id 'org.jetbrains.kotlin.android'
+  id 'expo-module-gradle-plugin'
 }
+
+def packageJson = new groovy.json.JsonSlurper().parse(new File(projectDir, '../package.json'))
+
+group = 'io.easydoge'
+version = packageJson.version
 
 android {
   namespace 'io.easydoge.km.expo'
-  compileSdk 36
 
   defaultConfig {
-    minSdk 24
+    versionCode 1
+    versionName packageJson.version
+    consumerProguardFiles 'proguard-rules.pro'
+  }
+
+  // vendor/ is assembled by scripts/prepare-expo-package.sh: the Kotlin facade
+  // and generated UniFFI sources plus the Rust libraries for every ABI.
+  sourceSets {
+    main {
+      java.srcDirs += ['vendor/java']
+      jniLibs.srcDirs += ['vendor/jniLibs']
+    }
   }
 }
 
 dependencies {
-  implementation project(':easydoge-km')
-  implementation 'expo.modules:expo-modules-core:+'
+  implementation 'net.java.dev.jna:jna:5.19.1@aar'
+  implementation 'androidx.biometric:biometric:1.1.0'
 }
-

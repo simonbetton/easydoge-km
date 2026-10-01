@@ -1,19 +1,64 @@
 #!/usr/bin/env bash
+# Repo-specific Gradle launcher. This is NOT the stock Gradle wrapper: no
+# gradle-wrapper.jar is committed. It downloads the distribution named by
+# distributionUrl, checks it against distributionSha256Sum BEFORE extracting
+# it, and only executes a tree it extracted from a verified archive.
+# Updating Gradle: docs/RELEASE.md, "Pinned Build Inputs".
+# Regression test: scripts/check-native-build-pins.sh.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROPS="$DIR/gradle/wrapper/gradle-wrapper.properties"
 DIST_URL="$(sed -n 's/^distributionUrl=//p' "$PROPS" | sed 's#\\:#:#')"
+DIST_SHA256="$(sed -n 's/^distributionSha256Sum=//p' "$PROPS")"
+
+if [[ ! "$DIST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "gradlew: distributionSha256Sum is missing or is not 64 lowercase hex characters in $PROPS; refusing to run an unverified Gradle distribution." >&2
+  exit 1
+fi
+
 DIST_NAME="$(basename "$DIST_URL" .zip)"
 DIST_ROOT="${DIST_NAME%-bin}"
-DIST_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/$DIST_NAME"
-GRADLE_BIN="$DIST_DIR/$DIST_ROOT/bin/gradle"
+CACHE_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/$DIST_NAME"
+ZIP="$CACHE_DIR/$DIST_NAME.zip"
+# The extracted tree lives in a directory named after the pinned checksum, so a
+# tree left by the older unverifying launcher, or one verified against a
+# different checksum, is never executed.
+VERIFIED_DIR="$CACHE_DIR/sha256-$DIST_SHA256"
+GRADLE_BIN="$VERIFIED_DIR/$DIST_ROOT/bin/gradle"
 
 if [[ ! -x "$GRADLE_BIN" ]]; then
-  mkdir -p "$DIST_DIR"
-  ZIP="$DIST_DIR/$DIST_NAME.zip"
-  curl -fsSL "$DIST_URL" -o "$ZIP"
-  unzip -q "$ZIP" -d "$DIST_DIR"
+  if command -v sha256sum >/dev/null 2>&1; then
+    SHA256_TOOL=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    SHA256_TOOL=(shasum -a 256)
+  else
+    echo "gradlew: neither sha256sum nor shasum is available; cannot verify the Gradle distribution." >&2
+    exit 1
+  fi
+
+  mkdir -p "$CACHE_DIR"
+  if [[ ! -f "$ZIP" ]]; then
+    curl -fsSL "$DIST_URL" -o "$ZIP.part"
+    mv "$ZIP.part" "$ZIP"
+  fi
+
+  ACTUAL_SHA256="$("${SHA256_TOOL[@]}" < "$ZIP")"
+  ACTUAL_SHA256="${ACTUAL_SHA256%% *}"
+  if [[ "$ACTUAL_SHA256" != "$DIST_SHA256" ]]; then
+    rm -f "$ZIP"
+    {
+      echo "gradlew: SHA-256 mismatch for $DIST_URL"
+      echo "  expected: $DIST_SHA256"
+      echo "  actual:   $ACTUAL_SHA256"
+      echo "The archive was deleted; nothing was extracted or executed."
+    } >&2
+    exit 1
+  fi
+
+  rm -rf "$VERIFIED_DIR" "$VERIFIED_DIR.partial"
+  unzip -q "$ZIP" -d "$VERIFIED_DIR.partial"
+  mv "$VERIFIED_DIR.partial" "$VERIFIED_DIR"
 fi
 
 exec "$GRADLE_BIN" "$@"

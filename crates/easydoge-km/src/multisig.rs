@@ -7,6 +7,17 @@ use crate::encoding::p2sh_address;
 use crate::keys::{decode_xpub, derive_path_from_xpub, Xpub};
 use crate::{Error, Network, Result};
 
+/// Largest script a P2SH spend can reveal. The spending scriptSig pushes the
+/// whole redeem script as one stack element, and consensus rejects any pushed
+/// element above 520 bytes (`MAX_SCRIPT_ELEMENT_SIZE` in Dogecoin Core), so
+/// funds sent to a larger redeem script can never be spent.
+pub(crate) const MAX_P2SH_REDEEM_SCRIPT_BYTES: usize = 520;
+
+/// Most cosigners a P2SH multisig redeem script can carry. With compressed
+/// keys the script is `1 + 34 * n + 2` bytes: 15 keys fit (513 bytes), 16 do
+/// not (547 bytes).
+pub(crate) const MAX_P2SH_MULTISIG_COSIGNERS: usize = 15;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultisigDescriptor {
     pub network: Network,
@@ -19,6 +30,13 @@ pub struct MultisigDescriptor {
     pub p2sh_address: String,
 }
 
+/// Creates a P2SH multisig descriptor from one child public key per cosigner
+/// xpub, derived at the shared non-hardened `child_path`.
+///
+/// Every cosigner must derive a distinct public key, and at most 15 cosigners
+/// are supported: a redeem script for 16 compressed keys is 547 bytes, above
+/// the 520-byte limit for a pushed script element, so its P2SH address could
+/// receive funds that can never be spent.
 pub fn create_multisig_descriptor(
     network: Network,
     threshold: u8,
@@ -36,9 +54,9 @@ pub fn create_multisig_descriptor(
             "threshold must be between 1 and cosigner count".to_owned(),
         ));
     }
-    if cosigner_xpubs.len() > 16 {
+    if cosigner_xpubs.len() > MAX_P2SH_MULTISIG_COSIGNERS {
         return Err(Error::Unsupported(
-            "multisig supports at most 16 cosigners".to_owned(),
+            "P2SH multisig supports at most 15 cosigners".to_owned(),
         ));
     }
 
@@ -83,12 +101,24 @@ pub(crate) fn build_multisig_redeem_script(
     threshold: u8,
     public_keys: &[PublicKey],
 ) -> Result<bitcoin::ScriptBuf> {
-    if !(1..=16).contains(&threshold) || usize::from(threshold) > public_keys.len() {
+    if public_keys.len() > MAX_P2SH_MULTISIG_COSIGNERS {
+        return Err(Error::Unsupported(
+            "P2SH multisig supports at most 15 cosigners".to_owned(),
+        ));
+    }
+    if threshold == 0 || usize::from(threshold) > public_keys.len() {
         return Err(Error::InvalidKey("invalid multisig threshold".to_owned()));
     }
-    if public_keys.len() > 16 {
-        return Err(Error::Unsupported(
-            "multisig supports at most 16 public keys".to_owned(),
+    // A repeated key would let one cosigner satisfy more than one of the
+    // threshold signatures, so an "m-of-n" script would need fewer than m
+    // distinct signers.
+    let has_repeated_key = public_keys
+        .iter()
+        .enumerate()
+        .any(|(index, key)| public_keys[..index].contains(key));
+    if has_repeated_key {
+        return Err(Error::InvalidKey(
+            "duplicate cosigner public key in multisig descriptor".to_owned(),
         ));
     }
 
@@ -96,10 +126,16 @@ pub(crate) fn build_multisig_redeem_script(
     for key in public_keys {
         builder = builder.push_key(&bitcoin::PublicKey::new(*key));
     }
-    builder = builder
+    let redeem_script = builder
         .push_opcode(pushnum_opcode(public_keys.len() as u8)?)
-        .push_opcode(OP_CHECKMULTISIG);
-    Ok(builder.into_script())
+        .push_opcode(OP_CHECKMULTISIG)
+        .into_script();
+    if redeem_script.len() > MAX_P2SH_REDEEM_SCRIPT_BYTES {
+        return Err(Error::Unsupported(
+            "multisig redeem script exceeds 520 bytes and cannot be spent".to_owned(),
+        ));
+    }
+    Ok(redeem_script)
 }
 
 fn pushnum_opcode(value: u8) -> Result<bitcoin::blockdata::opcodes::Opcode> {

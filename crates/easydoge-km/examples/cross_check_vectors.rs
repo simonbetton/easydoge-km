@@ -21,6 +21,7 @@ struct CrossCheckInput {
     message_cases: Vec<MessageCase>,
     transaction_cases: Vec<TransactionCase>,
     multisig_cases: Vec<MultisigCase>,
+    wif_cases: Vec<WifCase>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +68,20 @@ struct MultisigCase {
     cosigner_bip44_case_ids: Vec<String>,
     child_path: String,
     sorted: bool,
+}
+
+/// A raw private key imported through WIF in the stated form. Exercises
+/// uncompressed keys, which no mnemonic-derived case can reach.
+#[derive(Debug, Deserialize)]
+struct WifCase {
+    id: String,
+    network: String,
+    private_key_hex: String,
+    compressed: bool,
+    message: String,
+    unsigned_tx_hex: String,
+    input_index: usize,
+    sighash_type: u32,
 }
 
 fn main() -> easydoge_km::Result<()> {
@@ -116,6 +131,11 @@ fn main() -> easydoge_km::Result<()> {
         .iter()
         .map(|case| emit_multisig(case, &mnemonic_by_id, &bip44_by_id))
         .collect::<easydoge_km::Result<Vec<_>>>()?;
+    let wif_cases = input
+        .wif_cases
+        .iter()
+        .map(emit_wif)
+        .collect::<easydoge_km::Result<Vec<_>>>()?;
 
     let output = json!({
         "version": input.version,
@@ -124,6 +144,7 @@ fn main() -> easydoge_km::Result<()> {
         "message_cases": message_cases,
         "transaction_cases": transaction_cases,
         "multisig_cases": multisig_cases,
+        "wif_cases": wif_cases,
     });
 
     if let Some(parent) = Path::new(&output_path).parent() {
@@ -342,6 +363,71 @@ fn emit_multisig(
         "redeem_script_hex": descriptor.redeem_script_hex,
         "p2sh_address": descriptor.p2sh_address,
     }))
+}
+
+fn emit_wif(case: &WifCase) -> easydoge_km::Result<serde_json::Value> {
+    let network = Network::from_str(&case.network)?;
+    let wif = wif_from_private_key_hex(network, &case.private_key_hex, case.compressed)?;
+    let wif_import = address_from_wif(network, &wif)?;
+    let signature = sign_message(network, &wif, &case.message)?;
+    let verified = verify_message(
+        network,
+        &signature.address,
+        &signature.signature_base64,
+        &case.message,
+    )?;
+    let script_pubkey_hex = p2pkh_script_pubkey_hex(&wif_import.public_key_hex)?;
+    let signed = sign_p2pkh_transaction(
+        network,
+        &case.unsigned_tx_hex,
+        case.input_index,
+        &script_pubkey_hex,
+        &wif,
+        case.sighash_type,
+    )?;
+
+    Ok(json!({
+        "id": case.id,
+        "network": network.to_string(),
+        "compressed": case.compressed,
+        "wif": wif,
+        "wif_import": {
+            "public_key_hex": wif_import.public_key_hex,
+            "address": wif_import.address,
+            "compressed": wif_import.compressed,
+        },
+        "message": case.message,
+        "message_address": signature.address,
+        "signature_base64": signature.signature_base64,
+        "verified": verified,
+        "unsigned_tx_hex": case.unsigned_tx_hex,
+        "input_index": case.input_index,
+        "sighash_type": case.sighash_type,
+        "script_pubkey_hex": script_pubkey_hex,
+        "signed_tx_hex": signed.signed_tx_hex,
+    }))
+}
+
+/// Encodes a WIF without going through the SDK, which only exports
+/// compressed WIFs from extended keys.
+fn wif_from_private_key_hex(
+    network: Network,
+    private_key_hex: &str,
+    compressed: bool,
+) -> easydoge_km::Result<String> {
+    let private_key = hex::decode(private_key_hex)
+        .map_err(|err| easydoge_km::Error::Serialization(err.to_string()))?;
+    if private_key.len() != 32 {
+        return Err(easydoge_km::Error::InvalidKey(
+            "private key hex must be 32 bytes".to_owned(),
+        ));
+    }
+    let mut payload = vec![network.prefixes().wif];
+    payload.extend_from_slice(&private_key);
+    if compressed {
+        payload.push(0x01);
+    }
+    Ok(bs58::encode(payload).with_check().into_string())
 }
 
 fn account_for_case(

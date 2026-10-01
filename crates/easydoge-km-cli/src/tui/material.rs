@@ -12,6 +12,7 @@ use easydoge_km::{
     xpub_from_xpriv, AddressInfo, AddressKind, ExtendedKeyInfo, Language, Network, WifInfo, Xpriv,
     Xpub,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Parity test phrase shared with `test-vectors/parity.json`.
 pub const SAMPLE_PHRASE: &str =
@@ -69,11 +70,13 @@ impl Branch {
 }
 
 /// A BIP39 seed phrase plus the optional passphrase that goes with it.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct SeedPhrase {
     pub phrase: String,
     pub passphrase: Option<String>,
+    #[zeroize(skip)]
     pub language: Language,
+    #[zeroize(skip)]
     pub word_count: usize,
 }
 
@@ -273,7 +276,9 @@ const UNCLASSIFIED: &str =
     "Could not classify pasted material as a seed phrase, xpriv, xpub, address, or WIF.";
 
 pub fn classify(input: &str) -> Result<Classified> {
-    let input = normalize(input);
+    // Pasted Material may be a Seed Phrase, Extended Private Key, or WIF, so
+    // the working copy is wiped when this function returns.
+    let mut input = Zeroizing::new(normalize(input));
     if input.is_empty() {
         return Err(anyhow!("Paste or type material before inspecting."));
     }
@@ -283,7 +288,7 @@ pub fn classify(input: &str) -> Result<Classified> {
         for language in LANGUAGES {
             if validate_mnemonic(&input, language)? {
                 return Ok(Classified::SeedPhrase(SeedPhrase {
-                    phrase: input,
+                    phrase: std::mem::take(&mut *input),
                     passphrase: None,
                     language,
                     word_count,
@@ -302,25 +307,27 @@ pub fn classify(input: &str) -> Result<Classified> {
     for network in candidate_networks(&input) {
         let xpriv = Xpriv {
             network,
-            encoded: input.clone(),
+            encoded: input.as_str().to_owned(),
         };
         if inspect_xpriv(&xpriv).is_ok() {
             return xpriv_material(xpriv).map(Classified::Material);
         }
     }
     for network in candidate_networks(&input) {
-        let xpub = Xpub {
+        let mut xpub = Xpub {
             network,
-            encoded: input.clone(),
+            encoded: input.as_str().to_owned(),
         };
         if inspect_xpub(&xpub).is_ok() {
             return xpub_material(xpub).map(Classified::Material);
         }
+        // The text was not an xpub and may be a WIF; wipe this candidate copy.
+        xpub.encoded.zeroize();
     }
     let matches = inspect_address(&input)?;
     if !matches.is_empty() {
         return Ok(Classified::Material(Material::Address {
-            address: input,
+            address: std::mem::take(&mut *input),
             matches,
         }));
     }
@@ -695,6 +702,58 @@ mod tests {
         assert!(!debug.contains("abandon"));
         assert!(!debug.contains(SAMPLE_PASSPHRASE));
         assert!(debug.contains("[redacted]"));
+    }
+
+    /// Compiles only when `T` wipes its secret fields when dropped.
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+
+    #[test]
+    fn key_source_secrets_are_wiped_when_dropped_or_zeroized() {
+        // Drop-time wiping cannot be observed safely, so pin the traits: a
+        // Key Source holds either a `SeedPhrase` or the SDK's `Xpriv`.
+        assert_zeroize_on_drop::<SeedPhrase>();
+        assert_zeroize_on_drop::<Xpriv>();
+
+        let mut seed = SeedPhrase::sample();
+        seed.zeroize();
+        assert!(seed.phrase.is_empty());
+        assert_eq!(seed.passphrase, None);
+        assert_eq!(seed.language, Language::English);
+        assert_eq!(seed.word_count, 12);
+    }
+
+    #[test]
+    fn pasted_secret_material_debug_output_is_redacted() -> Result<()> {
+        let keys = account_xpriv_from_mnemonic(
+            SAMPLE_PHRASE,
+            Some(SAMPLE_PASSPHRASE),
+            Language::English,
+            Network::Mainnet,
+            0,
+        )?;
+        let classified_xpriv = classify(&keys.xpriv.encoded)?;
+        let Classified::Material(xpriv_material) = classified_xpriv.clone() else {
+            panic!("expected material");
+        };
+        let classified_wif = classify(PARITY_WIF)?;
+        let classified_seed = classify(SAMPLE_PHRASE)?;
+        let Classified::SeedPhrase(seed) = classified_seed.clone() else {
+            panic!("expected a seed phrase");
+        };
+
+        for debug in [
+            format!("{classified_xpriv:?}"),
+            format!("{:?}", Source::Pasted(xpriv_material)),
+            format!("{classified_wif:?}"),
+            format!("{classified_seed:?}"),
+            format!("{:?}", Source::Generated(seed.clone())),
+            format!("{:?}", Source::Pasted(Material::SeedPhrase(seed))),
+        ] {
+            assert!(!debug.contains(keys.xpriv.encoded.as_str()));
+            assert!(!debug.contains(PARITY_WIF));
+            assert!(!debug.contains("abandon"));
+        }
+        Ok(())
     }
 
     #[test]

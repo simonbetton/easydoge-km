@@ -20,6 +20,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 easydoge-km = { version = "0.1.0", path = "../easydoge-km" }
 thiserror.workspace = true
 uniffi.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

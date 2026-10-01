@@ -5,6 +5,7 @@ public enum WireCodecError: Error, Equatable, LocalizedError {
     case invalidKoinu(field: String)
     case invalidInteger(field: String, range: String)
     case unrepresentable(field: String)
+    case invalidEnum(field: String, allowed: [String])
 
     public var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ public enum WireCodecError: Error, Equatable, LocalizedError {
             return "Invalid \(field): expected an integer in \(range)"
         case let .unrepresentable(field):
             return "Cannot return \(field): value exceeds JavaScript's safe integer range"
+        case let .invalidEnum(field, allowed):
+            return "Invalid \(field): expected one of \(allowed.joined(separator: ", "))"
         }
     }
 }

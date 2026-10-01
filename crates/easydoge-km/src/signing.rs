@@ -3,19 +3,37 @@ use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytesBuf;
 use bitcoin::secp256k1::ecdsa::Signature;
-use bitcoin::secp256k1::{Message, PublicKey, Secp256k1};
+use bitcoin::secp256k1::{All, Message, PublicKey, Secp256k1};
 use bitcoin::sighash::SighashCache;
 use bitcoin::Transaction;
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
+use std::collections::HashSet;
 
 use crate::encoding::hash160_bytes;
-use crate::keys::secret_key_from_wif;
-use crate::{Error, Network, Result};
+use crate::keys::WifKey;
+use crate::multisig::MAX_P2SH_REDEEM_SCRIPT_BYTES;
+use crate::{limits, Error, Network, Result};
 
 const SIGHASH_ALL: u32 = 0x01;
 const SIGHASH_NONE: u32 = 0x02;
 const SIGHASH_SINGLE: u32 = 0x03;
 const SIGHASH_ANYONECANPAY: u32 = 0x80;
+const COMPRESSED_PUBLIC_KEY_BYTES: usize = 33;
+const UNCOMPRESSED_PUBLIC_KEY_BYTES: usize = 65;
+pub(crate) const UNCOMPRESSED_MULTISIG_UNSUPPORTED: &str =
+    "uncompressed WIF keys cannot sign P2SH multisig inputs";
+
+/// True for the two standard SEC1 public key encodings: 33 bytes starting
+/// `02`/`03`, or 65 bytes starting `04`. Hybrid encodings (`06`/`07`) parse
+/// in libsecp256k1 but are non-standard and never produced by this SDK.
+fn is_standard_public_key_encoding(bytes: &[u8]) -> bool {
+    matches!(
+        (bytes.len(), bytes.first()),
+        (COMPRESSED_PUBLIC_KEY_BYTES, Some(0x02 | 0x03))
+            | (UNCOMPRESSED_PUBLIC_KEY_BYTES, Some(0x04))
+    )
+}
 
 /// Accepts only the six consensus-defined sighash values and returns the
 /// single byte appended to a DER signature.
@@ -122,66 +140,159 @@ pub fn sign_p2pkh_transaction(
 pub fn sign_signing_envelope(envelope: &SigningEnvelope, wif: &str) -> Result<SigningEnvelope> {
     let tx = parse_transaction(&envelope.unsigned_tx_hex)?;
     let validated = validate_envelope(envelope, &tx, DescriptorCoverage::Partial)?;
-    let secret_key = secret_key_from_wif(wif, envelope.network)?;
+    let key = WifKey::parse(wif, envelope.network)?;
     let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-    let public_key_hex = hex::encode(public_key.serialize());
+    let public_key_bytes = key.public_key_bytes(&secp);
+    let public_key_hex = hex::encode(&public_key_bytes);
     let cache = SighashCache::new(&tx);
+    // Inputs this key has already signed, found in one pass over the
+    // signatures instead of one scan per input.
+    let already_signed: HashSet<usize> = envelope
+        .signatures
+        .iter()
+        .filter(|signature| {
+            signature
+                .public_key_hex
+                .eq_ignore_ascii_case(&public_key_hex)
+        })
+        .map(|signature| signature.input_index)
+        .collect();
     let mut signatures = envelope.signatures.clone();
     let mut controls_any_input = false;
 
     for input in &validated {
-        if !input.controls(&public_key) {
+        if !input.controls(&public_key_bytes) {
             continue;
         }
         controls_any_input = true;
-        let index = input.index();
-        let already_signed = signatures.iter().any(|signature| {
-            signature.input_index == index
-                && signature
-                    .public_key_hex
-                    .eq_ignore_ascii_case(&public_key_hex)
-        });
-        if already_signed {
+        if already_signed.contains(&input.index()) {
             continue;
         }
-        let sighash = cache
-            .legacy_signature_hash(
-                index,
-                input.signing_script.as_script(),
-                input.descriptor.sighash_type,
-            )
-            .map_err(|err| Error::Crypto(err.to_string()))?;
-        let message = Message::from_digest(sighash.to_byte_array());
-        let mut der = secp
-            .sign_ecdsa(&message, &secret_key)
-            .serialize_der()
-            .to_vec();
-        der.push(input.sighash_flag);
-        signatures.push(SigningEnvelopeSignature {
-            input_index: index,
-            public_key_hex: public_key_hex.clone(),
-            signature_hex: hex::encode(der),
-        });
+        signatures.push(sign_validated_input(
+            &secp,
+            &cache,
+            input,
+            &key,
+            &public_key_hex,
+        )?);
     }
 
     if !controls_any_input {
-        return Err(Error::InvalidKey(
-            "WIF does not control any input in the signing envelope".to_owned(),
-        ));
+        return Err(no_controlled_input_error(&secp, &key, &validated));
     }
     let mut next = envelope.clone();
     next.signatures = signatures;
     Ok(next)
 }
 
+/// Signs one described input of `tx` with each WIF in turn and returns the new
+/// signature records in signing order.
+///
+/// This is what `sign_signing_envelope` does for an envelope that describes
+/// only this input and holds no signature for it yet, called once per WIF,
+/// but the descriptor is validated once and the transaction is neither
+/// re-parsed nor re-validated for every key. The Compose-and-Sign Transaction
+/// Builder signs through it; the caller must hold no signature for this
+/// input. A WIF that does not control the input is an error, and a WIF whose
+/// public key already signed the input adds nothing.
+pub(crate) fn sign_described_input<'w>(
+    tx: &Transaction,
+    network: Network,
+    descriptor: &SigningEnvelopeInput,
+    wifs: impl IntoIterator<Item = &'w str>,
+) -> Result<Vec<SigningEnvelopeSignature>> {
+    let validated = validate_descriptors(
+        std::slice::from_ref(descriptor),
+        tx,
+        DescriptorCoverage::Partial,
+    )?;
+    let input = &validated[0];
+    let secp = Secp256k1::new();
+    let cache = SighashCache::new(tx);
+    let mut signatures: Vec<SigningEnvelopeSignature> = Vec::new();
+    for wif in wifs {
+        let key = WifKey::parse(wif, network)?;
+        let public_key_bytes = key.public_key_bytes(&secp);
+        let public_key_hex = hex::encode(&public_key_bytes);
+        if !input.controls(&public_key_bytes) {
+            return Err(no_controlled_input_error(&secp, &key, &validated));
+        }
+        let already_signed = signatures.iter().any(|signature| {
+            signature
+                .public_key_hex
+                .eq_ignore_ascii_case(&public_key_hex)
+        });
+        if already_signed {
+            continue;
+        }
+        signatures.push(sign_validated_input(
+            &secp,
+            &cache,
+            input,
+            &key,
+            &public_key_hex,
+        )?);
+    }
+    Ok(signatures)
+}
+
+/// The one place a signature is produced: hashes the input (at most once per
+/// validated input) and signs the digest with `key`.
+fn sign_validated_input(
+    secp: &Secp256k1<All>,
+    cache: &SighashCache<&Transaction>,
+    input: &ValidatedInput<'_>,
+    key: &WifKey,
+    public_key_hex: &str,
+) -> Result<SigningEnvelopeSignature> {
+    let message = Message::from_digest(input.sighash(cache)?);
+    let mut der = secp
+        .sign_ecdsa(&message, &key.secret_key)
+        .serialize_der()
+        .to_vec();
+    der.push(input.sighash_flag);
+    Ok(SigningEnvelopeSignature {
+        input_index: input.index(),
+        public_key_hex: public_key_hex.to_owned(),
+        signature_hex: hex::encode(der),
+    })
+}
+
+/// The error for a WIF that controls none of the validated inputs.
+fn no_controlled_input_error(
+    secp: &Secp256k1<All>,
+    key: &WifKey,
+    validated: &[ValidatedInput<'_>],
+) -> Error {
+    if !key.compressed {
+        let compressed_hex =
+            hex::encode(PublicKey::from_secret_key(secp, &key.secret_key).serialize());
+        if validated
+            .iter()
+            .any(|input| input.lists_multisig_key(&compressed_hex))
+        {
+            return Error::Unsupported(UNCOMPRESSED_MULTISIG_UNSUPPORTED.to_owned());
+        }
+    }
+    Error::InvalidKey("WIF does not control any input in the signing envelope".to_owned())
+}
+
 pub fn combine_signing_envelopes(envelopes: &[SigningEnvelope]) -> Result<SigningEnvelope> {
+    limits::check_count(
+        format_args!("combine request"),
+        envelopes.len(),
+        "signing envelopes",
+        limits::MAX_ENVELOPES_PER_COMBINE,
+    )?;
     let first = envelopes
         .first()
         .ok_or_else(|| Error::InvalidTransaction("at least one envelope is required".to_owned()))?;
     let tx = parse_transaction(&first.unsigned_tx_hex)?;
     validate_envelope(first, &tx, DescriptorCoverage::Partial)?;
     let mut combined = first.clone();
+    // Signatures already in `combined`, so merging is one lookup per signature.
+    let mut seen: HashSet<(usize, &str, &str)> =
+        first.signatures.iter().map(signature_identity).collect();
     for envelope in envelopes.iter().skip(1) {
         if envelope.version != first.version
             || envelope.network != first.network
@@ -194,16 +305,24 @@ pub fn combine_signing_envelopes(envelopes: &[SigningEnvelope]) -> Result<Signin
         }
         validate_envelope(envelope, &tx, DescriptorCoverage::Partial)?;
         for signature in &envelope.signatures {
-            if !combined.signatures.iter().any(|existing| {
-                existing.input_index == signature.input_index
-                    && existing.public_key_hex == signature.public_key_hex
-                    && existing.signature_hex == signature.signature_hex
-            }) {
+            if seen.insert(signature_identity(signature)) {
                 combined.signatures.push(signature.clone());
             }
         }
     }
+    // Keep the result acceptable to the next sign, combine, or finalize call.
+    enforce_envelope_limits(&combined, &tx)?;
     Ok(combined)
+}
+
+/// What makes two signature records the same entry when combining: the exact
+/// input index, public key text, and signature text (hex case included).
+fn signature_identity(signature: &SigningEnvelopeSignature) -> (usize, &str, &str) {
+    (
+        signature.input_index,
+        signature.public_key_hex.as_str(),
+        signature.signature_hex.as_str(),
+    )
 }
 
 pub fn finalize_signing_envelope(envelope: &SigningEnvelope) -> Result<SignedTransaction> {
@@ -216,14 +335,19 @@ fn apply_signatures(
 ) -> Result<SignedTransaction> {
     let mut tx = parse_transaction(&envelope.unsigned_tx_hex)?;
     let validated = validate_envelope(envelope, &tx, coverage)?;
+    // Group the signatures by input once, keeping envelope order inside each
+    // group, instead of filtering the whole list for every input.
+    let mut signatures_by_input: Vec<Vec<&SigningEnvelopeSignature>> =
+        vec![Vec::new(); tx.input.len()];
+    for signature in &envelope.signatures {
+        if let Some(group) = signatures_by_input.get_mut(signature.input_index) {
+            group.push(signature);
+        }
+    }
     let mut script_sigs = Vec::with_capacity(validated.len());
     for input in &validated {
         let index = input.index();
-        let mut matching: Vec<&SigningEnvelopeSignature> = envelope
-            .signatures
-            .iter()
-            .filter(|signature| signature.input_index == index)
-            .collect();
+        let mut matching = std::mem::take(&mut signatures_by_input[index]);
         matching.sort_by_key(|signature| signature.public_key_hex.as_str());
         if matching.is_empty() {
             return Err(Error::InvalidTransaction(format!(
@@ -272,7 +396,12 @@ fn apply_signatures(
                         })
                         .unwrap_or(usize::MAX)
                 });
-                matching.dedup_by(|left, right| left.public_key_hex == right.public_key_hex);
+                // One signature per signer: hex case must not turn one public
+                // key into two.
+                matching.dedup_by(|left, right| {
+                    left.public_key_hex
+                        .eq_ignore_ascii_case(&right.public_key_hex)
+                });
                 if matching.len() < usize::from(metadata.threshold) {
                     return Err(Error::InvalidTransaction(format!(
                         "input {} has {} valid multisig signatures, threshold is {}",
@@ -326,6 +455,10 @@ struct ValidatedInput<'a> {
     pubkey_hash: Option<[u8; 20]>,
     sighash_flag: u8,
     multisig: Option<MultisigMetadata>,
+    /// Legacy signature hash of this input, filled on first use. It lives
+    /// here, next to the descriptor it was computed from, so it can never be
+    /// reused for a different script or sighash type.
+    sighash: OnceCell<[u8; 32]>,
 }
 
 impl ValidatedInput<'_> {
@@ -333,18 +466,46 @@ impl ValidatedInput<'_> {
         self.descriptor.input_index
     }
 
-    fn controls(&self, public_key: &PublicKey) -> bool {
+    /// The digest every signature on this input commits to. One legacy
+    /// signature hash serializes and hashes the whole transaction, so it is
+    /// computed at most once per validated input and shared by every
+    /// signature that is verified or produced for it.
+    fn sighash(&self, cache: &SighashCache<&Transaction>) -> Result<[u8; 32]> {
+        if let Some(digest) = self.sighash.get() {
+            return Ok(*digest);
+        }
+        let digest = cache
+            .legacy_signature_hash(
+                self.index(),
+                self.signing_script.as_script(),
+                self.descriptor.sighash_type,
+            )
+            .map_err(|err| Error::Crypto(err.to_string()))?
+            .to_byte_array();
+        // The cell was empty a moment ago and nothing that could fill it ran
+        // in between, so `set` succeeds; its result carries no information.
+        let _ = self.sighash.set(digest);
+        Ok(digest)
+    }
+
+    /// Whether the key with this exact serialization can sign the input.
+    /// P2PKH commits to the hash of one serialization, so the compressed and
+    /// uncompressed forms of the same key control different scripts.
+    fn controls(&self, public_key_bytes: &[u8]) -> bool {
         match (&self.pubkey_hash, &self.multisig) {
-            (Some(hash), _) => hash160_bytes(&public_key.serialize()) == *hash,
-            (None, Some(metadata)) => {
-                let hex = hex::encode(public_key.serialize());
-                metadata
-                    .public_keys_hex
-                    .iter()
-                    .any(|key| key.eq_ignore_ascii_case(&hex))
-            }
+            (Some(hash), _) => hash160_bytes(public_key_bytes) == *hash,
+            (None, Some(_)) => self.lists_multisig_key(&hex::encode(public_key_bytes)),
             (None, None) => false,
         }
+    }
+
+    fn lists_multisig_key(&self, public_key_hex: &str) -> bool {
+        self.multisig.as_ref().is_some_and(|metadata| {
+            metadata
+                .public_keys_hex
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(public_key_hex))
+        })
     }
 }
 
@@ -355,13 +516,28 @@ fn validate_envelope<'a>(
     tx: &Transaction,
     coverage: DescriptorCoverage,
 ) -> Result<Vec<ValidatedInput<'a>>> {
+    enforce_envelope_limits(envelope, tx)?;
     if envelope.version != 1 {
         return Err(Error::InvalidTransaction(format!(
             "unsupported signing envelope version {}",
             envelope.version
         )));
     }
-    let mut descriptors: Vec<&SigningEnvelopeInput> = envelope.inputs.iter().collect();
+    let validated = validate_descriptors(&envelope.inputs, tx, coverage)?;
+    verify_signatures(&envelope.signatures, &validated, tx)?;
+    Ok(validated)
+}
+
+/// Validates input descriptors against the transaction: unique, in-range
+/// input indices, complete coverage when required, and scripts that are
+/// consistent with each input kind. Returns the inputs sorted by transaction
+/// input index. No signature is looked at.
+fn validate_descriptors<'a>(
+    inputs: &'a [SigningEnvelopeInput],
+    tx: &Transaction,
+    coverage: DescriptorCoverage,
+) -> Result<Vec<ValidatedInput<'a>>> {
+    let mut descriptors: Vec<&SigningEnvelopeInput> = inputs.iter().collect();
     descriptors.sort_by_key(|input| input.input_index);
     if let Some(pair) = descriptors
         .windows(2)
@@ -402,23 +578,18 @@ fn validate_envelope<'a>(
                         "P2PKH input {index} must not include a redeem script"
                     )));
                 }
-                let bytes = script_pubkey.as_bytes();
-                let is_p2pkh = bytes.len() == 25
-                    && bytes[0..3] == [0x76, 0xa9, 0x14]
-                    && bytes[23..25] == [0x88, 0xac];
-                if !is_p2pkh {
-                    return Err(Error::InvalidTransaction(format!(
+                let hash = p2pkh_pubkey_hash(script_pubkey.as_bytes()).ok_or_else(|| {
+                    Error::InvalidTransaction(format!(
                         "P2PKH input {index} script pubkey is not a pay-to-pubkey-hash script"
-                    )));
-                }
-                let mut hash = [0u8; 20];
-                hash.copy_from_slice(&bytes[3..23]);
+                    ))
+                })?;
                 ValidatedInput {
                     descriptor,
                     signing_script: script_pubkey,
                     pubkey_hash: Some(hash),
                     sighash_flag,
                     multisig: None,
+                    sighash: OnceCell::new(),
                 }
             }
             SigningInputKind::P2shMultisig => {
@@ -438,25 +609,45 @@ fn validate_envelope<'a>(
                         "P2SH input {index} script pubkey does not match redeem script"
                     )));
                 }
-                let metadata = multisig_metadata(descriptor, redeem_script_hex)?;
+                let metadata = multisig_metadata(
+                    redeem_script_hex,
+                    descriptor.multisig_threshold,
+                    &descriptor.multisig_public_keys_hex,
+                )?;
                 ValidatedInput {
                     descriptor,
                     signing_script: redeem_script,
                     pubkey_hash: None,
                     sighash_flag,
                     multisig: Some(metadata),
+                    sighash: OnceCell::new(),
                 }
             }
         };
         validated.push(input);
     }
+    Ok(validated)
+}
 
+/// Verifies every signature that refers to a described input. `validated`
+/// must come from `validate_descriptors` for the same transaction.
+fn verify_signatures(
+    signatures: &[SigningEnvelopeSignature],
+    validated: &[ValidatedInput<'_>],
+    tx: &Transaction,
+) -> Result<()> {
+    // Where each described input sits in `validated`, by transaction input
+    // index, so a signature finds its input without scanning the list.
+    let mut positions: Vec<Option<usize>> = vec![None; tx.input.len()];
+    for (position, input) in validated.iter().enumerate() {
+        positions[input.index()] = Some(position);
+    }
     let secp = Secp256k1::verification_only();
     let cache = SighashCache::new(tx);
-    for signature in &envelope.signatures {
+    for signature in signatures {
         let index = signature.input_index;
-        let input = match validated.iter().find(|input| input.index() == index) {
-            Some(input) => input,
+        let input = match positions.get(index).copied().flatten() {
+            Some(position) => &validated[position],
             None if index >= tx.input.len() => {
                 return Err(Error::InvalidTransaction(format!(
                     "signature references input {index} which is out of range (transaction has {} inputs)",
@@ -464,11 +655,9 @@ fn validate_envelope<'a>(
                 )));
             }
             // Only reachable under Partial coverage, because Complete coverage
-            // describes every in-range input. A co-signer, or the transaction
-            // builder (which signs one input at a time while carrying the
-            // signatures already collected for other inputs), may hold
-            // signatures for inputs this envelope does not describe. They cannot
-            // be verified here because the signing script is unknown; they are
+            // describes every in-range input. A co-signer may hold signatures
+            // for inputs this envelope does not describe. They cannot be
+            // verified here because the signing script is unknown; they are
             // verified at finalization, which requires every input described.
             None => continue,
         };
@@ -479,7 +668,19 @@ fn validate_envelope<'a>(
                 "signature for input {index} has an invalid public key"
             ))
         })?;
-        if public_key_bytes.len() != 33 || !input.controls(&public_key) {
+        let encoding_supported = match input.descriptor.kind {
+            SigningInputKind::P2pkh => is_standard_public_key_encoding(&public_key_bytes),
+            SigningInputKind::P2shMultisig => {
+                public_key_bytes.len() == COMPRESSED_PUBLIC_KEY_BYTES
+                    && is_standard_public_key_encoding(&public_key_bytes)
+            }
+        };
+        if !encoding_supported {
+            return Err(Error::InvalidTransaction(format!(
+                "signature for input {index} has an unsupported public key encoding"
+            )));
+        }
+        if !input.controls(&public_key_bytes) {
             return Err(Error::InvalidTransaction(format!(
                 "signature for input {index} was made by a key that does not control the input"
             )));
@@ -503,24 +704,53 @@ fn validate_envelope<'a>(
         let parsed = Signature::from_der(der).map_err(|_| {
             Error::InvalidTransaction(format!("signature for input {index} is not valid DER"))
         })?;
-        let sighash = cache
-            .legacy_signature_hash(
-                index,
-                input.signing_script.as_script(),
-                input.descriptor.sighash_type,
-            )
-            .map_err(|err| Error::Crypto(err.to_string()))?;
-        let message = Message::from_digest(sighash.to_byte_array());
+        let message = Message::from_digest(input.sighash(&cache)?);
         if secp.verify_ecdsa(&message, &parsed, &public_key).is_err() {
             return Err(Error::InvalidTransaction(format!(
                 "signature for input {index} does not verify against the transaction"
             )));
         }
     }
-    Ok(validated)
+    Ok(())
+}
+
+/// Resource limits from `crate::limits` for one envelope. Runs before any
+/// script parsing, signature hashing, or signature verification.
+fn enforce_envelope_limits(envelope: &SigningEnvelope, tx: &Transaction) -> Result<()> {
+    let max_signatures = tx
+        .input
+        .len()
+        .saturating_mul(limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT);
+    if envelope.signatures.len() > max_signatures {
+        return Err(Error::InvalidTransaction(format!(
+            "signing envelope has {} signatures, which exceeds the limit of {max_signatures} ({} per transaction input)",
+            envelope.signatures.len(),
+            limits::MAX_ENVELOPE_SIGNATURES_PER_INPUT
+        )));
+    }
+    for input in &envelope.inputs {
+        limits::check_hex_len(
+            format_args!("input {} script pubkey", input.input_index),
+            &input.script_pubkey_hex,
+            limits::MAX_SCRIPT_BYTES,
+        )?;
+        if let Some(redeem_script_hex) = input.redeem_script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("input {} redeem script", input.input_index),
+                redeem_script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_transaction(hex_value: &str) -> Result<Transaction> {
+    limits::check_hex_len(
+        format_args!("unsigned transaction"),
+        hex_value,
+        limits::MAX_TRANSACTION_BYTES,
+    )?;
     let bytes = hex::decode(hex_value)
         .map_err(|err| Error::InvalidTransaction(format!("invalid tx hex: {err}")))?;
     deserialize(&bytes).map_err(|err| Error::InvalidTransaction(err.to_string()))
@@ -536,45 +766,74 @@ fn push_bytes(bytes: Vec<u8>) -> Result<PushBytesBuf> {
     PushBytesBuf::try_from(bytes).map_err(|err| Error::Serialization(err.to_string()))
 }
 
-struct MultisigMetadata {
-    threshold: u8,
-    public_keys_hex: Vec<String>,
+/// Returns the 20-byte public key hash when `script_pubkey` is the canonical
+/// 25-byte pay-to-pubkey-hash script
+/// (`OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG`).
+pub(crate) fn p2pkh_pubkey_hash(script_pubkey: &[u8]) -> Option<[u8; 20]> {
+    let is_p2pkh = script_pubkey.len() == 25
+        && script_pubkey[0..3] == [0x76, 0xa9, 0x14]
+        && script_pubkey[23..25] == [0x88, 0xac];
+    if !is_p2pkh {
+        return None;
+    }
+    let mut hash = [0u8; 20];
+    hash.copy_from_slice(&script_pubkey[3..23]);
+    Some(hash)
 }
 
-fn multisig_metadata(
-    input: &SigningEnvelopeInput,
+/// Threshold and public keys of a P2SH multisig redeem script, with the keys
+/// in redeem-script order as lowercase hex.
+pub(crate) struct MultisigMetadata {
+    pub(crate) threshold: u8,
+    pub(crate) public_keys_hex: Vec<String>,
+}
+
+/// Parses the redeem script and checks any caller-declared threshold and
+/// public keys against it. The redeem script is the source of truth; the
+/// declared values are optional and only ever validated, never trusted.
+pub(crate) fn multisig_metadata(
     redeem_script_hex: &str,
+    declared_threshold: Option<u8>,
+    declared_public_keys_hex: &[String],
 ) -> Result<MultisigMetadata> {
     let parsed = parse_multisig_redeem_script(redeem_script_hex)?;
-    if let Some(threshold) = input.multisig_threshold {
+    if let Some(threshold) = declared_threshold {
         if threshold != parsed.threshold {
             return Err(Error::InvalidTransaction(
                 "multisig threshold metadata does not match redeem script".to_owned(),
             ));
         }
     }
-    if !input.multisig_public_keys_hex.is_empty()
-        && (input.multisig_public_keys_hex.len() != parsed.public_keys_hex.len()
-            || !input.multisig_public_keys_hex.iter().all(|key| {
-                parsed
-                    .public_keys_hex
-                    .iter()
-                    .any(|parsed_key| parsed_key.eq_ignore_ascii_case(key))
-            }))
-    {
-        return Err(Error::InvalidTransaction(
-            "multisig public key metadata does not match redeem script".to_owned(),
-        ));
+    if !declared_public_keys_hex.is_empty() {
+        // Compare as multisets: same keys, same number of times each, in any
+        // order and any hex case.
+        let mut supplied = declared_public_keys_hex
+            .iter()
+            .map(|key| key.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        supplied.sort_unstable();
+        let mut expected = parsed.public_keys_hex.clone();
+        expected.sort_unstable();
+        if supplied != expected {
+            return Err(Error::InvalidTransaction(
+                "multisig public key metadata does not match redeem script".to_owned(),
+            ));
+        }
     }
     Ok(MultisigMetadata {
-        threshold: input.multisig_threshold.unwrap_or(parsed.threshold),
+        threshold: declared_threshold.unwrap_or(parsed.threshold),
         public_keys_hex: parsed.public_keys_hex,
     })
 }
 
-fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
+pub(crate) fn parse_multisig_redeem_script(redeem_script_hex: &str) -> Result<MultisigMetadata> {
     let bytes = hex::decode(redeem_script_hex)
         .map_err(|err| Error::Serialization(format!("invalid redeem script hex: {err}")))?;
+    if bytes.len() > MAX_P2SH_REDEEM_SCRIPT_BYTES {
+        return Err(Error::InvalidTransaction(
+            "redeem script exceeds 520 bytes and cannot be spent".to_owned(),
+        ));
+    }
     if bytes.len() < 3 {
         return Err(Error::InvalidTransaction(
             "invalid multisig redeem script".to_owned(),

@@ -1,10 +1,15 @@
 {
-  "platforms": ["ios", "android"],
-  "ios": {
-    "modules": ["EasyDogeKMModule"]
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["EasyDogeKMModule"],
+    "podspecPath": [
+      "ios/EasyDogeKMFFI.podspec",
+      "ios/EasyDogeKM.podspec",
+      "ios/EasyDogeKMExpo.podspec"
+    ],
+    "swiftModuleName": "EasyDogeKMExpo"
   },
   "android": {
     "modules": ["io.easydoge.km.expo.EasyDogeKMModule"]
   }
 }
-

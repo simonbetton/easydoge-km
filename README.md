@@ -1,8 +1,8 @@
 # EasyDoge KM
 
-Production-ready Dogecoin key-management SDK for self-custodial products.
+Dogecoin key-management SDK for self-custodial products.
 
-EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin bindings, an Expo React Native bridge, and an engineer CLI/TUI. The project is built around deterministic parity vectors so backend, iOS, Android, Expo, CLI, and TUI surfaces stay aligned.
+EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin bindings, an Expo React Native bridge, and an engineer CLI/TUI. Shared fixtures exercise the Rust core, UniFFI, Swift, and Kotlin wrappers. The Expo native modules are compiled by a separate host-app build check but are not run by any automated test, and device storage behavior is not covered; see the [security model](docs/SECURITY_MODEL.md) for current limitations.
 
 ## Workspace
 
@@ -12,7 +12,7 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 - `bindings/`: Swift, Kotlin, generated UniFFI, and Expo package surfaces.
 - `docs/`: API, CLI/TUI, security model, release, and architecture documentation.
 - `scripts/`: Verification, binding generation, and release artifact helpers.
-- `test-vectors/`: Shared parity vectors consumed by every public surface.
+- `test-vectors/`: Shared parity fixtures and inputs for independent Rust/bitcoinjs cross-checks.
 - `tools/bitcoinjs-cross-check`: Independent bitcoinjs-based cross-check runner.
 
 ## Features
@@ -23,7 +23,7 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 - xpriv path derivation, xpriv-to-xpub conversion, WIF export/import, and address validation.
 - P2PKH message signing/verification and transaction signing envelopes.
 - Deterministic P2SH multisig descriptors plus sign/combine/finalize CLI flows.
-- Rust, Swift, Kotlin, and Expo APIs generated from the same Rust implementation for 1:1 feature parity.
+- Generated Swift/Kotlin UniFFI bindings and a handwritten Expo bridge over the Rust implementation. The [API table](docs/API.md#key-and-seed-apis) lists coverage and exceptions.
 - Ratatui CLI/TUI for engineers who want terminal access to the Rust implementation.
 
 ## Requirements
@@ -32,8 +32,12 @@ EasyDoge KM provides one canonical Rust implementation, native Swift and Kotlin 
 - Swift 6 or newer for Swift package verification
 - JDK 17 for Android/Kotlin verification
 - Node.js 20 or newer and pnpm for Expo TypeScript and cross-check verification
+- Bash and ripgrep for the verification scripts
+- Android SDK with platform 36 and an SDK path configured through `ANDROID_HOME` or `bindings/kotlin/local.properties` for Gradle checks
 - Xcode for Apple release artifacts
-- Android SDK and `cargo-ndk` for Android native release artifacts
+- Android NDK and `cargo-ndk` for Android native release artifacts
+
+The full verification workflow runs on macOS in CI. Swift storage uses Apple's Security and LocalAuthentication frameworks, so the full suite requires an Apple development environment.
 
 ## Quick Start
 
@@ -64,23 +68,29 @@ easydoge-km tui
 Derive an account key set from a known test mnemonic:
 
 ```sh
-easydoge-km xpriv from-mnemonic \
-  --phrase "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
-  --passphrase TREZOR \
+printf '%s' "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" > phrase.txt
+printf '%s' "TREZOR" | easydoge-km xpriv from-mnemonic \
+  --phrase-file phrase.txt \
+  --passphrase-file - \
   --network mainnet \
   --account 0 \
   --reveal
+rm phrase.txt
 ```
+
+Real secrets should come from a protected file or standard input, never from a literal flag; see [Supplying secrets](docs/CLI.md#supplying-secrets).
 
 ## API Surfaces
 
 - Rust backend services use the `easydoge-km` crate directly.
-- iOS apps use the Swift package under `bindings/swift`.
-- Android apps use the Kotlin package under `bindings/kotlin`.
-- Expo apps use the Expo Modules API package under `bindings/expo` in custom dev-client or EAS builds.
+- iOS apps can integrate the Swift sources under `bindings/swift` with a matching native library.
+- Android apps can integrate the Kotlin library under `bindings/kotlin` with native libraries for their target ABIs.
+- Expo apps install the `@easydoge/km-expo` tarball built from `bindings/expo` by `scripts/pack-expo-package.sh` in custom dev-client or EAS builds; Expo Go is unsupported.
 - Engineers can use the CLI binary and Ratatui TUI from `crates/easydoge-km-cli`.
 
 See [docs/API.md](docs/API.md) for the parity table and examples, and [docs/CLI.md](docs/CLI.md) for CLI/TUI usage.
+
+The Swift and Kotlin packages currently rely on workspace paths and separately built native libraries; they are not standalone binary distributions. The Expo package is assembled into a self-contained npm tarball at pack time. Nothing is published to a registry yet. See [bindings/README.md](bindings/README.md) for integration requirements.
 
 ## Security Boundary
 
@@ -102,10 +112,13 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) and [SECURITY.md](SECURITY.
 - Clippy with warnings denied
 - Rust workspace build
 - Rust docs build
-- UniFFI Swift and Kotlin binding generation
+- UniFFI Swift and Kotlin binding generation, with a check that the committed generated sources are current
 - Swift package tests
 - Expo TypeScript checks
+- Native build input pin checks (Gradle distribution checksum, no dynamic dependency versions)
 - Android/Kotlin Gradle tests
+
+The shell syntax check covers every script under `scripts/`. Gradle tests run when the wrapper is executable. The suite regenerates the committed binding sources and fails if they differ from the git index, so stage regenerated bindings after an intentional FFI or UniFFI change. Expo is typechecked against a local module declaration; its native modules are not compiled or run by this suite. `./scripts/verify-expo-native.sh` (the `Expo Native` CI workflow) compiles them inside a minimal host app and needs Xcode, CocoaPods, the Android SDK and NDK, and `cargo-ndk`. Storage authentication, persistence, and mobile release artifacts need separate device/build verification.
 
 ## Releasing
 
@@ -113,6 +126,8 @@ Release steps are documented in [docs/RELEASE.md](docs/RELEASE.md). Native artif
 
 - `scripts/build-apple-xcframework.sh`
 - `scripts/build-android-native-libs.sh`
+- `scripts/prepare-expo-package.sh`
+- `scripts/pack-expo-package.sh`
 - `scripts/package-release.sh`
 
 ## Contributing

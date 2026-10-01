@@ -8,23 +8,27 @@ use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::encoding::{base58check_decode, hash160_bytes, wif};
-use crate::keys::{decode_xpriv, derive_path_from_xpriv, secret_key_from_wif, Xpriv};
+use crate::keys::{decode_xpriv, derive_path_from_xpriv, WifKey, Xpriv};
 use crate::signing::{
-    finalize_signing_envelope, sign_signing_envelope, validate_sighash_type,
-    validated_sighash_flag, SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature,
-    SigningInputKind,
+    finalize_signing_envelope, multisig_metadata, p2pkh_pubkey_hash, parse_multisig_redeem_script,
+    sign_described_input, validate_sighash_type, validated_sighash_flag, MultisigMetadata,
+    SigningEnvelope, SigningEnvelopeInput, SigningEnvelopeSignature, SigningInputKind,
+    UNCOMPRESSED_MULTISIG_UNSUPPORTED,
 };
-use crate::{Error, Network, Result};
+use crate::{limits, Error, Network, Result};
 
 const DEFAULT_SEQUENCE: u32 = 0xffff_ffff;
 const DEFAULT_SIGHASH_ALL: u32 = 1;
 const OP_RETURN_STANDARD_DATA_LIMIT_BYTES: usize = 80;
 const MAX_SIGNATURE_PUSH_BYTES: usize = 73;
 const COMPRESSED_PUBLIC_KEY_BYTES: usize = 33;
+const UNCOMPRESSED_PUBLIC_KEY_BYTES: usize = 65;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComposeTransactionRequest {
@@ -68,11 +72,13 @@ pub struct SpendableUtxo {
     pub manually_selected: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UtxoSigner {
+    #[zeroize(skip)]
     pub kind: UtxoSignerKind,
     pub wif: Option<String>,
     pub xpriv: Option<Xpriv>,
+    #[zeroize(skip)]
     pub derivation_path: Option<String>,
 }
 
@@ -117,12 +123,22 @@ pub struct FeePolicy {
     pub dust_threshold_koinu: u64,
 }
 
+/// How the builder orders candidate UTXOs for Coin Selection. Every strategy
+/// adds UTXOs in its order, ties broken by `txid` text and then `vout`, and
+/// stops at the first selection that funds the transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CoinSelectionStrategy {
+    /// Highest value net of the fee for spending that input first. Funds the
+    /// transaction with the fewest inputs the supplied UTXOs allow.
     MinInputs,
+    /// Lowest `previous_output_value_koinu` first.
     SmallestFirst,
+    /// Highest `previous_output_value_koinu` first, ignoring what each input
+    /// costs to spend.
     LargestFirst,
+    /// Only UTXOs with `manually_selected` set, lowest
+    /// `previous_output_value_koinu` first.
     ManualSelectedInputs,
 }
 
@@ -201,7 +217,20 @@ pub struct SkippedInput {
 struct PreparedOutput {
     txout: TxOut,
     spend_value_koinu: u64,
-    script_pubkey_hex: String,
+}
+
+/// Sizes and totals the funding loop keeps up to date while it adds UTXOs,
+/// so each candidate selection is checked without revisiting the UTXOs
+/// already selected or the outputs.
+struct SelectionTotals {
+    /// Sum of `previous_output_value_koinu` over the selected UTXOs.
+    input_total_koinu: u64,
+    /// Sum of `estimated_input_size` over the selected UTXOs.
+    input_bytes: usize,
+    /// Number of spend outputs (fixed for the request).
+    output_count: usize,
+    /// Serialized size of the spend outputs (fixed for the request).
+    output_bytes: usize,
 }
 
 struct FundingResult {
@@ -215,9 +244,12 @@ struct FundingResult {
 }
 
 struct ResolvedSigner {
+    /// The public key in the signer's own serialization: 65 bytes for an
+    /// uncompressed WIF, 33 bytes for a compressed WIF or an xpriv derivation.
+    public_key_bytes: Vec<u8>,
     public_key_hex: String,
-    public_key: PublicKey,
-    wif: String,
+    compressed: bool,
+    wif: Zeroizing<String>,
 }
 
 pub fn compose_and_sign_transaction(
@@ -266,37 +298,35 @@ pub fn compose_and_sign_transaction(
         inputs: selected_utxos
             .iter()
             .enumerate()
-            .map(|(input_index, utxo)| SigningEnvelopeInput {
-                input_index,
-                kind: utxo.kind.clone(),
-                script_pubkey_hex: utxo.script_pubkey_hex.clone(),
-                redeem_script_hex: utxo.redeem_script_hex.clone(),
-                sighash_type: request.options.sighash_type,
-                previous_output_value_koinu: Some(utxo.previous_output_value_koinu),
-                multisig_threshold: utxo.multisig_threshold,
-                multisig_public_keys_hex: utxo.multisig_public_keys_hex.clone(),
+            .map(|(input_index, utxo)| {
+                envelope_input(input_index, utxo, request.options.sighash_type)
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
         signatures: vec![],
     };
 
+    // Input i is signed only by the signers listed on UTXO i. The transaction
+    // built above is signed directly: nothing is re-parsed from hex, and the
+    // descriptor of each signed input is validated once.
     for (input_index, utxo) in selected_utxos.iter().enumerate() {
         let signers = resolve_valid_signers(request.network, utxo)?;
-        for signer in signers {
-            let single_input_envelope = SigningEnvelope {
-                version: envelope.version,
-                network: envelope.network,
-                unsigned_tx_hex: envelope.unsigned_tx_hex.clone(),
-                inputs: vec![envelope.inputs[input_index].clone()],
-                signatures: envelope.signatures.clone(),
-            };
-            let signed_partial = sign_signing_envelope(&single_input_envelope, &signer.wif)?;
-            envelope.signatures = signed_partial.signatures;
+        if signers.is_empty() {
+            continue;
         }
+        let signatures = sign_described_input(
+            &tx,
+            request.network,
+            &envelope.inputs[input_index],
+            signers.iter().map(|signer| signer.wif.as_str()),
+        )?;
+        envelope.signatures.extend(signatures);
     }
-    envelope.signatures = dedupe_signatures(envelope.signatures);
 
-    let signed = if envelope_is_complete(&envelope)? {
+    let complete = envelope_is_complete(&envelope)?;
+    // Deliberate self-check: finalizing re-validates the whole envelope and
+    // verifies every signature the loop above produced. It is the only full
+    // validation pass in the builder.
+    let signed = if complete {
         Some(finalize_signing_envelope(&envelope)?)
     } else {
         None
@@ -323,15 +353,12 @@ pub fn compose_and_sign_transaction(
         dust_change_folded_into_fee: funding.dust_change_folded_into_fee,
         unsigned_tx_hex,
         signed_tx_hex: signed.map(|signed| signed.signed_tx_hex),
-        signing_envelope: if envelope_is_complete(&envelope)? {
-            None
-        } else {
-            Some(envelope)
-        },
+        signing_envelope: if complete { None } else { Some(envelope) },
     })
 }
 
 fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
+    enforce_request_limits(request)?;
     if request.utxos.is_empty() {
         return Err(Error::InvalidTransaction(
             "at least one UTXO is required".to_owned(),
@@ -353,6 +380,73 @@ fn validate_request(request: &ComposeTransactionRequest) -> Result<()> {
         ));
     }
     validate_sighash_type(request.options.sighash_type)?;
+    reject_duplicate_outpoints(&request.utxos)?;
+    Ok(())
+}
+
+/// Resource limits from `crate::limits`. Runs before any parsing, key
+/// derivation, or Coin Selection, so an oversized request costs one pass over
+/// its collections and nothing else.
+fn enforce_request_limits(request: &ComposeTransactionRequest) -> Result<()> {
+    limits::check_count(
+        format_args!("request"),
+        request.utxos.len(),
+        "UTXOs",
+        limits::MAX_REQUEST_UTXOS,
+    )?;
+    limits::check_count(
+        format_args!("request"),
+        request.outputs.len(),
+        "outputs",
+        limits::MAX_REQUEST_OUTPUTS,
+    )?;
+    for (index, utxo) in request.utxos.iter().enumerate() {
+        limits::check_count(
+            format_args!("UTXO at index {index}"),
+            utxo.signers.len(),
+            "signers",
+            limits::MAX_SIGNERS_PER_UTXO,
+        )?;
+        limits::check_hex_len(
+            format_args!("UTXO at index {index} script pubkey"),
+            &utxo.script_pubkey_hex,
+            limits::MAX_SCRIPT_BYTES,
+        )?;
+        if let Some(redeem_script_hex) = utxo.redeem_script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("UTXO at index {index} redeem script"),
+                redeem_script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
+    for (index, output) in request.outputs.iter().enumerate() {
+        if let Some(script_hex) = output.script_hex.as_deref() {
+            limits::check_hex_len(
+                format_args!("output at index {index} script"),
+                script_hex,
+                limits::MAX_SCRIPT_BYTES,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A UTXO outpoint (`txid:vout`) may be listed only once per request. Counting
+/// it twice would inflate the input total and repeat a transaction input,
+/// which Dogecoin consensus rejects. Txid hex is compared case-insensitively
+/// and is deliberately not parsed here: malformed txids keep surfacing from
+/// `validate_utxo`, only for UTXOs that Coin Selection reaches.
+fn reject_duplicate_outpoints(utxos: &[SpendableUtxo]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(utxos.len());
+    for utxo in utxos {
+        if !seen.insert((utxo.txid.to_ascii_lowercase(), utxo.vout)) {
+            return Err(Error::InvalidTransaction(format!(
+                "duplicate UTXO outpoint {}:{}",
+                utxo.txid, utxo.vout
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -401,10 +495,9 @@ fn prepare_outputs(request: &ComposeTransactionRequest) -> Result<Vec<PreparedOu
             Ok(PreparedOutput {
                 txout: TxOut {
                     value: Amount::from_sat(output.value_koinu),
-                    script_pubkey: script.clone(),
+                    script_pubkey: script,
                 },
                 spend_value_koinu: output.value_koinu,
-                script_pubkey_hex: hex::encode(script.as_bytes()),
             })
         })
         .collect()
@@ -421,6 +514,17 @@ fn fund_transaction(
     let mut selected_indices = Vec::new();
     let mut skipped_inputs = Vec::new();
     let ordered = ordered_utxo_indices(request);
+    // `is_selected[i]` is true once `request.utxos[i]` has been selected.
+    let mut is_selected = vec![false; request.utxos.len()];
+    let mut totals = SelectionTotals {
+        input_total_koinu: 0,
+        input_bytes: 0,
+        output_count: outputs.len(),
+        output_bytes: outputs
+            .iter()
+            .map(|output| serialized_output_size(&output.txout.script_pubkey))
+            .sum(),
+    };
 
     for index in ordered {
         let utxo = &request.utxos[index];
@@ -432,15 +536,21 @@ fn fund_transaction(
         }
         validate_utxo(request.network, utxo)?;
         selected_indices.push(index);
+        is_selected[index] = true;
+        // Keep this order: the value is added before the input is sized, as
+        // when both were recomputed for every candidate selection.
+        totals.input_total_koinu =
+            checked_add(totals.input_total_koinu, utxo.previous_output_value_koinu)?;
+        totals.input_bytes += estimated_input_size(request.network, utxo)?;
         if let Some(funding) =
-            funding_for_selection(request, outputs, &selected_indices, spend_total)?
+            funding_for_selection(request, &selected_indices, &totals, spend_total)?
         {
             skipped_inputs.extend(
                 request
                     .utxos
                     .iter()
                     .enumerate()
-                    .filter(|(candidate, _)| !selected_indices.contains(candidate))
+                    .filter(|(candidate, _)| !is_selected[*candidate])
                     .filter(|(_, candidate)| {
                         request.coin_selection != CoinSelectionStrategy::ManualSelectedInputs
                             || candidate.manually_selected
@@ -462,79 +572,75 @@ fn fund_transaction(
 
 fn funding_for_selection(
     request: &ComposeTransactionRequest,
-    outputs: &[PreparedOutput],
     selected_indices: &[usize],
+    totals: &SelectionTotals,
     spend_total: u64,
 ) -> Result<Option<FundingResult>> {
-    let input_total = selected_indices
-        .iter()
-        .map(|index| request.utxos[*index].previous_output_value_koinu)
-        .try_fold(0u64, checked_add)?;
-    let output_scripts = outputs
-        .iter()
-        .map(|output| output.script_pubkey_hex.as_str())
-        .collect::<Vec<_>>();
-    let no_change_size = estimate_size_bytes(request, selected_indices, &output_scripts, None)?;
+    let input_total = totals.input_total_koinu;
+    let no_change_size = estimate_size_bytes(selected_indices.len(), totals, None)?;
     let no_change_fee = fee_for_size(no_change_size, request.fee_policy.fee_rate_koinu_per_kb)?;
     if input_total < checked_add(spend_total, no_change_fee)? {
         return Ok(None);
     }
     let remainder_without_change = input_total - spend_total - no_change_fee;
-    if remainder_without_change < request.fee_policy.dust_threshold_koinu {
-        return Ok(Some(FundingResult {
-            selected_indices: selected_indices.to_vec(),
-            skipped_inputs: vec![],
-            fee_koinu: input_total - spend_total,
-            estimated_size_bytes: no_change_size,
-            change_amount_koinu: 0,
-            change_script: None,
-            dust_change_folded_into_fee: remainder_without_change > 0,
-        }));
+    // Funding without a change output: the whole remainder is paid as fee.
+    let without_change = FundingResult {
+        selected_indices: selected_indices.to_vec(),
+        skipped_inputs: vec![],
+        fee_koinu: input_total - spend_total,
+        estimated_size_bytes: no_change_size,
+        change_amount_koinu: 0,
+        change_script: None,
+        dust_change_folded_into_fee: remainder_without_change > 0,
+    };
+    let dust_threshold = request.fee_policy.dust_threshold_koinu;
+    if remainder_without_change == 0 || remainder_without_change < dust_threshold {
+        return Ok(Some(without_change));
     }
 
     let change_script = change_script(request)?;
-    let with_change_size = estimate_size_bytes(
-        request,
-        selected_indices,
-        &output_scripts,
-        Some(&change_script),
-    )?;
+    let with_change_size =
+        estimate_size_bytes(selected_indices.len(), totals, Some(&change_script))?;
     let with_change_fee = fee_for_size(with_change_size, request.fee_policy.fee_rate_koinu_per_kb)?;
-    if input_total < checked_add(spend_total, with_change_fee)? {
-        return Ok(None);
+    // `None` when the remainder cannot pay for the change output itself. The
+    // selection still funds the transaction, so never report it as unfunded.
+    let change_amount = input_total.checked_sub(checked_add(spend_total, with_change_fee)?);
+    match change_amount {
+        Some(change_amount) if change_amount > 0 && change_amount >= dust_threshold => {
+            Ok(Some(FundingResult {
+                selected_indices: selected_indices.to_vec(),
+                skipped_inputs: vec![],
+                fee_koinu: with_change_fee,
+                estimated_size_bytes: with_change_size,
+                change_amount_koinu: change_amount,
+                change_script: Some(change_script),
+                dust_change_folded_into_fee: false,
+            }))
+        }
+        _ => Ok(Some(without_change)),
     }
-    let change_amount = input_total - spend_total - with_change_fee;
-    if change_amount < request.fee_policy.dust_threshold_koinu {
-        return Ok(Some(FundingResult {
-            selected_indices: selected_indices.to_vec(),
-            skipped_inputs: vec![],
-            fee_koinu: input_total - spend_total,
-            estimated_size_bytes: no_change_size,
-            change_amount_koinu: 0,
-            change_script: None,
-            dust_change_folded_into_fee: change_amount > 0,
-        }));
-    }
-    Ok(Some(FundingResult {
-        selected_indices: selected_indices.to_vec(),
-        skipped_inputs: vec![],
-        fee_koinu: with_change_fee,
-        estimated_size_bytes: with_change_size,
-        change_amount_koinu: change_amount,
-        change_script: Some(change_script),
-        dust_change_folded_into_fee: false,
-    }))
 }
 
 fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
     let mut indices = (0..request.utxos.len()).collect::<Vec<_>>();
     match request.coin_selection {
-        CoinSelectionStrategy::MinInputs | CoinSelectionStrategy::LargestFirst => {
+        CoinSelectionStrategy::MinInputs => {
+            let fee_rate = request.fee_policy.fee_rate_koinu_per_kb;
+            indices.sort_by_cached_key(|index| {
+                let utxo = &request.utxos[*index];
+                (
+                    Reverse(effective_value_scaled(request.network, utxo, fee_rate)),
+                    utxo.txid.as_str(),
+                    utxo.vout,
+                )
+            });
+        }
+        CoinSelectionStrategy::LargestFirst => {
             indices.sort_by_key(|index| {
                 let utxo = &request.utxos[*index];
                 (
                     Reverse(utxo.previous_output_value_koinu),
-                    utxo.txid.clone(),
+                    utxo.txid.as_str(),
                     utxo.vout,
                 )
             });
@@ -544,7 +650,7 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
                 let utxo = &request.utxos[*index];
                 (
                     utxo.previous_output_value_koinu,
-                    utxo.txid.clone(),
+                    utxo.txid.as_str(),
                     utxo.vout,
                 )
             });
@@ -553,14 +659,40 @@ fn ordered_utxo_indices(request: &ComposeTransactionRequest) -> Vec<usize> {
     indices
 }
 
+/// Value of a UTXO net of the fee for spending it, scaled by 1000 so the
+/// per-kilobyte fee rate needs no rounding:
+/// `value * 1000 - estimated_input_size * fee_rate_koinu_per_kb`.
+///
+/// A selection funds a transaction exactly when the sum of these values
+/// covers `1000 * spend + fixed_size * fee_rate`, so taking UTXOs in
+/// descending order of this value reaches a funded selection with the fewest
+/// inputs. A UTXO whose input size cannot be estimated is ranked by its raw
+/// value; its error surfaces when the funding loop reaches it.
+fn effective_value_scaled(
+    network: Network,
+    utxo: &SpendableUtxo,
+    fee_rate_koinu_per_kb: u64,
+) -> i128 {
+    let input_size = estimated_input_size(network, utxo).unwrap_or(0);
+    let input_size = i128::try_from(input_size).unwrap_or(i128::MAX);
+    i128::from(utxo.previous_output_value_koinu)
+        .saturating_mul(1000)
+        .saturating_sub(input_size.saturating_mul(i128::from(fee_rate_koinu_per_kb)))
+}
+
 fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
     parse_txid(&utxo.txid)?;
-    parse_script(&utxo.script_pubkey_hex)?;
+    let script_pubkey = parse_script(&utxo.script_pubkey_hex)?;
     match utxo.kind {
         SigningInputKind::P2pkh => {
             if utxo.redeem_script_hex.is_some() {
                 return Err(Error::InvalidTransaction(
                     "P2PKH UTXO must not include redeem script".to_owned(),
+                ));
+            }
+            if p2pkh_pubkey_hash(script_pubkey.as_bytes()).is_none() {
+                return Err(Error::InvalidTransaction(
+                    "P2PKH UTXO script pubkey is not a pay-to-pubkey-hash script".to_owned(),
                 ));
             }
         }
@@ -575,21 +707,13 @@ fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
                     "P2SH script pubkey does not match redeem script".to_owned(),
                 ));
             }
-            if let Some(threshold) = utxo.multisig_threshold {
-                if threshold == 0 {
-                    return Err(Error::InvalidTransaction(
-                        "multisig threshold must be greater than zero".to_owned(),
-                    ));
-                }
-            }
-            if !utxo.multisig_public_keys_hex.is_empty()
-                && usize::from(utxo.multisig_threshold.unwrap_or(0))
-                    > utxo.multisig_public_keys_hex.len()
-            {
-                return Err(Error::InvalidTransaction(
-                    "multisig threshold exceeds public key count".to_owned(),
-                ));
-            }
+            // The redeem script is the source of truth. Declared threshold and
+            // public keys are optional and must agree with it when present.
+            multisig_metadata(
+                redeem_script_hex,
+                utxo.multisig_threshold,
+                &utxo.multisig_public_keys_hex,
+            )?;
         }
     }
     for signer in &utxo.signers {
@@ -597,6 +721,43 @@ fn validate_utxo(network: Network, utxo: &SpendableUtxo) -> Result<()> {
         validate_signer_ownership(utxo, &resolved)?;
     }
     Ok(())
+}
+
+/// Threshold and public keys parsed from a P2SH Multisig UTXO's Redeem Script.
+/// Fee sizing and emitted Signing Envelope metadata come from here, never from
+/// the caller-declared `multisig_threshold` / `multisig_public_keys_hex`.
+fn redeem_script_multisig(utxo: &SpendableUtxo) -> Result<MultisigMetadata> {
+    let redeem_script_hex = utxo.redeem_script_hex.as_deref().ok_or_else(|| {
+        Error::InvalidTransaction("P2SH multisig UTXO requires redeem script".to_owned())
+    })?;
+    parse_multisig_redeem_script(redeem_script_hex)
+}
+
+fn envelope_input(
+    input_index: usize,
+    utxo: &SpendableUtxo,
+    sighash_type: u32,
+) -> Result<SigningEnvelopeInput> {
+    let (multisig_threshold, multisig_public_keys_hex) = match utxo.kind {
+        SigningInputKind::P2pkh => (
+            utxo.multisig_threshold,
+            utxo.multisig_public_keys_hex.clone(),
+        ),
+        SigningInputKind::P2shMultisig => {
+            let multisig = redeem_script_multisig(utxo)?;
+            (Some(multisig.threshold), multisig.public_keys_hex)
+        }
+    };
+    Ok(SigningEnvelopeInput {
+        input_index,
+        kind: utxo.kind.clone(),
+        script_pubkey_hex: utxo.script_pubkey_hex.clone(),
+        redeem_script_hex: utxo.redeem_script_hex.clone(),
+        sighash_type,
+        previous_output_value_koinu: Some(utxo.previous_output_value_koinu),
+        multisig_threshold,
+        multisig_public_keys_hex,
+    })
 }
 
 fn build_unsigned_transaction(
@@ -639,9 +800,9 @@ fn resolve_valid_signers(network: Network, utxo: &SpendableUtxo) -> Result<Vec<R
 
 fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigner> {
     let wif_value = match signer.kind {
-        UtxoSignerKind::Wif => signer.wif.clone().ok_or_else(|| {
+        UtxoSignerKind::Wif => Zeroizing::new(signer.wif.clone().ok_or_else(|| {
             Error::InvalidKey("WIF signer requires redacted WIF field".to_owned())
-        })?,
+        })?),
         UtxoSignerKind::XprivDerivation => {
             let xpriv = signer.xpriv.as_ref().ok_or_else(|| {
                 Error::InvalidKey("xpriv derivation signer requires xpriv".to_owned())
@@ -658,15 +819,17 @@ fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigne
             })?;
             let child = derive_path_from_xpriv(xpriv, path)?;
             let child_key = decode_xpriv(network, &child.encoded)?;
-            wif(network, &child_key.private_key.secret_bytes(), true)
+            let secret_bytes = Zeroizing::new(child_key.private_key.secret_bytes());
+            Zeroizing::new(wif(network, &secret_bytes, true))
         }
     };
-    let secret_key = secret_key_from_wif(&wif_value, network)?;
+    let key = WifKey::parse(&wif_value, network)?;
     let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let public_key_bytes = key.public_key_bytes(&secp);
     Ok(ResolvedSigner {
-        public_key_hex: hex::encode(public_key.serialize()),
-        public_key,
+        public_key_hex: hex::encode(&public_key_bytes),
+        public_key_bytes,
+        compressed: key.compressed,
         wif: wif_value,
     })
 }
@@ -674,7 +837,7 @@ fn resolve_signer(network: Network, signer: &UtxoSigner) -> Result<ResolvedSigne
 fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> Result<()> {
     match utxo.kind {
         SigningInputKind::P2pkh => {
-            let expected = p2pkh_script_pubkey(&hash160_bytes(&signer.public_key.serialize()));
+            let expected = p2pkh_script_pubkey(&hash160_bytes(&signer.public_key_bytes));
             if hex::encode(expected.as_bytes()) != utxo.script_pubkey_hex.to_ascii_lowercase() {
                 return Err(Error::InvalidKey(format!(
                     "signer public key does not match P2PKH UTXO {}:{}",
@@ -683,6 +846,12 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
             }
         }
         SigningInputKind::P2shMultisig => {
+            if !signer.compressed {
+                return Err(Error::Unsupported(format!(
+                    "{UNCOMPRESSED_MULTISIG_UNSUPPORTED} (UTXO {}:{})",
+                    utxo.txid, utxo.vout
+                )));
+            }
             if !utxo.multisig_public_keys_hex.is_empty()
                 && !utxo
                     .multisig_public_keys_hex
@@ -703,7 +872,7 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
             if !redeem_script
                 .as_bytes()
                 .windows(COMPRESSED_PUBLIC_KEY_BYTES)
-                .any(|window| window == signer.public_key.serialize())
+                .any(|window| window == signer.public_key_bytes.as_slice())
             {
                 return Err(Error::InvalidKey(format!(
                     "signer public key is not in redeem script for UTXO {}:{}",
@@ -716,15 +885,19 @@ fn validate_signer_ownership(utxo: &SpendableUtxo, signer: &ResolvedSigner) -> R
 }
 
 fn envelope_is_complete(envelope: &SigningEnvelope) -> Result<bool> {
+    // Group the signatures by input once instead of filtering the whole list
+    // for every input. A group exists only for an input with a signature.
+    let mut signatures_by_input: HashMap<usize, Vec<&SigningEnvelopeSignature>> = HashMap::new();
+    for signature in &envelope.signatures {
+        signatures_by_input
+            .entry(signature.input_index)
+            .or_default()
+            .push(signature);
+    }
     envelope.inputs.iter().try_fold(true, |complete, input| {
-        let matching = envelope
-            .signatures
-            .iter()
-            .filter(|signature| signature.input_index == input.input_index)
-            .collect::<Vec<_>>();
-        if matching.is_empty() {
+        let Some(matching) = signatures_by_input.get(&input.input_index) else {
             return Ok(false);
-        }
+        };
         match input.kind {
             SigningInputKind::P2pkh => Ok(complete),
             SigningInputKind::P2shMultisig => {
@@ -754,38 +927,42 @@ fn envelope_is_complete(envelope: &SigningEnvelope) -> Result<bool> {
 }
 
 fn estimate_size_bytes(
-    request: &ComposeTransactionRequest,
-    selected_indices: &[usize],
-    output_script_hexes: &[&str],
+    input_count: usize,
+    totals: &SelectionTotals,
     change_script: Option<&ScriptBuf>,
 ) -> Result<u64> {
-    let input_count = selected_indices.len();
-    let output_count = output_script_hexes.len() + usize::from(change_script.is_some());
-    let mut size = 4 + varint_len(input_count) + varint_len(output_count) + 4;
-    for index in selected_indices {
-        size += estimated_input_size(&request.utxos[*index])?;
-    }
-    for script_hex in output_script_hexes {
-        let script_len = hex::decode(script_hex)
-            .map_err(|err| Error::Serialization(format!("invalid script hex: {err}")))?
-            .len();
-        size += 8 + varint_len(script_len) + script_len;
-    }
+    let output_count = totals.output_count + usize::from(change_script.is_some());
+    let mut size = 4
+        + varint_len(input_count)
+        + varint_len(output_count)
+        + 4
+        + totals.input_bytes
+        + totals.output_bytes;
     if let Some(script) = change_script {
-        size += 8 + varint_len(script.len()) + script.len();
+        size += serialized_output_size(script);
+    }
+    if size > limits::MAX_TRANSACTION_BYTES {
+        return Err(Error::InvalidTransaction(format!(
+            "estimated transaction size is {size} bytes, which exceeds the limit of {} bytes",
+            limits::MAX_TRANSACTION_BYTES
+        )));
     }
     Ok(size as u64)
 }
 
-fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
+/// Serialized size of one transaction output: an 8-byte value, the script
+/// length prefix, and the script.
+fn serialized_output_size(script_pubkey: &ScriptBuf) -> usize {
+    8 + varint_len(script_pubkey.len()) + script_pubkey.len()
+}
+
+fn estimated_input_size(network: Network, utxo: &SpendableUtxo) -> Result<usize> {
     let script_sig_len = match utxo.kind {
-        SigningInputKind::P2pkh => 1 + MAX_SIGNATURE_PUSH_BYTES + 1 + COMPRESSED_PUBLIC_KEY_BYTES,
+        SigningInputKind::P2pkh => {
+            1 + MAX_SIGNATURE_PUSH_BYTES + 1 + p2pkh_public_key_push_bytes(network, utxo)
+        }
         SigningInputKind::P2shMultisig => {
-            let threshold = utxo.multisig_threshold.ok_or_else(|| {
-                Error::InvalidTransaction(
-                    "P2SH multisig input size requires threshold metadata".to_owned(),
-                )
-            })? as usize;
+            let threshold = usize::from(redeem_script_multisig(utxo)?.threshold);
             let redeem_script_len =
                 parse_script(utxo.redeem_script_hex.as_deref().ok_or_else(|| {
                     Error::InvalidTransaction(
@@ -799,6 +976,30 @@ fn estimated_input_size(utxo: &SpendableUtxo) -> Result<usize> {
         }
     };
     Ok(32 + 4 + varint_len(script_sig_len) + script_sig_len + 4)
+}
+
+/// Size of the public key a P2PKH scriptSig for `utxo` will reveal.
+///
+/// A UTXO with an uncompressed WIF signer reveals the 65-byte key. Every
+/// other case is sized for a 33-byte key: xpriv-derivation signers are always
+/// compressed, and a UTXO without signers is assumed to belong to a compressed
+/// key because the builder cannot know otherwise.
+///
+/// Only the WIF payload is decoded (Base58Check, no elliptic-curve work),
+/// because the estimate runs once per candidate selection.
+fn p2pkh_public_key_push_bytes(network: Network, utxo: &SpendableUtxo) -> usize {
+    let has_uncompressed_wif_signer = utxo.signers.iter().any(|signer| {
+        signer.kind == UtxoSignerKind::Wif
+            && signer
+                .wif
+                .as_deref()
+                .is_some_and(|wif| WifKey::parse(wif, network).is_ok_and(|key| !key.compressed))
+    });
+    if has_uncompressed_wif_signer {
+        UNCOMPRESSED_PUBLIC_KEY_BYTES
+    } else {
+        COMPRESSED_PUBLIC_KEY_BYTES
+    }
 }
 
 fn fee_for_size(size_bytes: u64, fee_rate_koinu_per_kb: u64) -> Result<u64> {
@@ -952,19 +1153,6 @@ fn skipped(utxo: &SpendableUtxo, reason: &str) -> SkippedInput {
         previous_output_value_koinu: utxo.previous_output_value_koinu,
         reason: reason.to_owned(),
     }
-}
-
-fn dedupe_signatures(signatures: Vec<SigningEnvelopeSignature>) -> Vec<SigningEnvelopeSignature> {
-    signatures.into_iter().fold(Vec::new(), |mut unique, sig| {
-        if !unique.iter().any(|existing: &SigningEnvelopeSignature| {
-            existing.input_index == sig.input_index
-                && existing.public_key_hex == sig.public_key_hex
-                && existing.signature_hex == sig.signature_hex
-        }) {
-            unique.push(sig);
-        }
-        unique
-    })
 }
 
 impl From<&SpendableUtxo> for AuditedInput {

@@ -14,6 +14,7 @@ use std::io;
 use anyhow::{Context, Result};
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
+use zeroize::Zeroize;
 
 use app::App;
 
@@ -42,7 +43,11 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
             .context("draw frame")?;
         match event::read().context("read terminal event")? {
             Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
-            Event::Paste(contents) => app.handle_paste(&contents),
+            Event::Paste(mut contents) => {
+                app.handle_paste(&contents);
+                // Pasted Material may be secret; wipe the terminal event's copy.
+                contents.zeroize();
+            }
             _ => {}
         }
     }
