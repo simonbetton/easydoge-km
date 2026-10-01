@@ -1,4 +1,4 @@
-use bip39::{Language as Bip39Language, Mnemonic};
+use bip39::{Language as Bip39Language, Mnemonic, WordCount};
 use bitcoin::bip32::{DerivationPath, Xpriv as BtcXpriv, Xpub as BtcXpub};
 use bitcoin::secp256k1::{All, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -184,10 +184,15 @@ impl FromStr for Language {
 }
 
 pub fn generate_mnemonic(options: MnemonicOptions) -> Result<GeneratedMnemonic> {
-    if !matches!(options.word_count, 12 | 15 | 18 | 21 | 24) {
-        return Err(Error::InvalidWordCount(options.word_count));
-    }
-    let mnemonic = Mnemonic::generate_in(options.language.to_bip39(), options.word_count)
+    let word_count = match options.word_count {
+        12 => WordCount::Words12,
+        15 => WordCount::Words15,
+        18 => WordCount::Words18,
+        21 => WordCount::Words21,
+        24 => WordCount::Words24,
+        count => return Err(Error::InvalidWordCount(count)),
+    };
+    let mnemonic = Mnemonic::generate_in(options.language.to_bip39(), word_count)
         .map_err(|err| Error::Crypto(err.to_string()))?;
     Ok(GeneratedMnemonic {
         phrase: mnemonic_phrase(&mnemonic),

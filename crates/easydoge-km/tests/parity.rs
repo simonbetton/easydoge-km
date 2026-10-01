@@ -3720,6 +3720,20 @@ fn dropping_a_copy_of_a_request_does_not_disturb_the_original() {
 }
 
 #[test]
+fn generated_seed_phrases_reject_unsupported_word_counts() {
+    for word_count in [0, 1, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, usize::MAX] {
+        let result = generate_mnemonic(MnemonicOptions {
+            language: Language::English,
+            word_count,
+        });
+        assert!(matches!(
+            result,
+            Err(easydoge_km::Error::InvalidWordCount(count)) if count == word_count
+        ));
+    }
+}
+
+#[test]
 fn generated_seed_phrases_are_single_spaced_and_validate_in_every_language() {
     for language in [
         Language::English,

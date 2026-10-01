@@ -15,6 +15,7 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
+- Upgraded `bip39` to 3.0.0 and adapted mnemonic generation to its `WordCount` API. The SDK continues to accept 12, 15, 18, 21, or 24 words and returns `InvalidWordCount` for other counts.
 - Corrected documentation to distinguish implemented APIs from runtime test coverage, document current storage and passphrase limitations, and clarify native integration and release requirements.
 - Redesigned the Ratatui TUI as a live address explorer. The fixed question/answer panels are replaced by a responsive layout (side by side from 80 columns, stacked below that) with a source panel, a receive/change address table that re-derives as you move, and a selected-address panel showing the derivation path and public key. New keys: `t` cycles networks, `:` jumps to an index, `x` returns to the sample mnemonic, `?` opens a key reference, and `Ctrl+C` quits from any mode. The paste inspector and passphrase prompt are masked popups. The `i`/`o`/`d` derivation keys and the `v` sample-validation key were removed because addresses now derive automatically, and `Esc` hides revealed secrets instead of quitting.
 - The TUI classifies testnet-style extended keys (`tprv`/`tpub`) as testnet instead of mainnet, and only offers regtest as the alternative network for them.
