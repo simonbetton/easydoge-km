@@ -672,6 +672,8 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic(
     ): Int
     external fun uniffi_easydoge_km_ffi_checksum_func_address_from_wif(
@@ -729,6 +731,8 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "easydoge_km_ffi"))
 
     }
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -906,70 +910,70 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 58952) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() and 0xFFFF) != 58952) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 62494) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() and 0xFFFF) != 62494) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 53844) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() and 0xFFFF) != 53844) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 31231) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() and 0xFFFF) != 31231) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 14743) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() and 0xFFFF) != 14743) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 12406) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() and 0xFFFF) != 12406) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 15360) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() and 0xFFFF) != 15360) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 24894) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() and 0xFFFF) != 24894) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 50174) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() and 0xFFFF) != 50174) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 6805) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() and 0xFFFF) != 6805) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 50715) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() and 0xFFFF) != 50715) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 62343) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() and 0xFFFF) != 62343) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 30445) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() and 0xFFFF) != 30445) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 45842) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() and 0xFFFF) != 45842) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() != 54472) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() and 0xFFFF) != 54472) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 9304) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() and 0xFFFF) != 9304) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 24006) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() and 0xFFFF) != 24006) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() != 61885) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() and 0xFFFF) != 61885) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59929) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() and 0xFFFF) != 59929) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() != 42166) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() and 0xFFFF) != 42166) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 13195) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() and 0xFFFF) != 13195) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 15071) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() and 0xFFFF) != 15071) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -978,10 +982,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
  * @suppress
  */
 public fun uniffiEnsureInitialized() {
-    IntegrityCheckingUniffiLib
-    // UniffiLib() initialized as objects are used, but we still need to explicitly
-    // reference it so initialization across crates works as expected.
-    UniffiLib
+    // Call arbitrary methods on IntegrityCheckingUniffiLib and UniffiLib to ensure that
+    // their init blocks run. This ensures initialization across crates works as expected.
+    IntegrityCheckingUniffiLib.ensureInitialized()
+    UniffiLib.ensureInitialized()
 }
 
 // Async support
