@@ -14,7 +14,7 @@ That split made it easy for different platform callers to disagree on txid byte 
 
 Implement an offline Compose-and-Sign Transaction Builder in the Rust core and expose it through the existing UniFFI, Expo, and CLI surfaces.
 
-The builder accepts caller-provided UTXO data, output requests, fee policy, coin-selection strategy, change destination, transaction options, and signer metadata. It composes and funds a legacy Dogecoin transaction, validates signer ownership, signs selected inputs, and returns either signed transaction hex or a signing envelope when more multisig signatures are needed.
+The builder accepts caller-provided UTXO data, output requests, fee policy, coin-selection strategy, change destination, transaction options, and signer metadata. It composes and funds a legacy Dogecoin transaction, validates signer ownership, signs selected inputs, and returns either signed transaction hex or a signing envelope when P2PKH or multisig signatures are missing.
 
 The SDK still does not fetch UTXOs, fetch live fee rates, broadcast transactions, or validate chain state.
 

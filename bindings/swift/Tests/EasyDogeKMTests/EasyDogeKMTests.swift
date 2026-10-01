@@ -86,6 +86,74 @@ import Testing
     #expect(descriptor.redeemScriptHex == string(multisig, "redeem_script_hex"))
 }
 
+@Test func secretBearingRecordsRedactTheirDescriptions() async throws {
+    let vectors = try parityVectors()
+    let mnemonic = object(vectors, "mnemonic")
+    let account = object(mnemonic, "account")
+    let phrase = string(mnemonic, "phrase")
+    let xprivText = string(account, "xpriv")
+    let wifText = string(account, "wif")
+    #expect(!phrase.isEmpty && !xprivText.isEmpty && !wifText.isEmpty)
+
+    let keys = try EasyDogeKM().accountKeys(
+        phrase: phrase,
+        passphrase: string(mnemonic, "passphrase")
+    )
+    #expect(keys.xpriv.encoded == xprivText)
+    let signer = UtxoSigner(kind: .wif, wif: wifText, xpriv: keys.xpriv, derivationPath: "m/0/0")
+    let change = ChangeDestination(address: nil, xpriv: keys.xpriv, derivationPath: "m/1/0")
+    let utxo = SpendableUtxo(
+        txid: "4444444444444444444444444444444444444444444444444444444444444444",
+        vout: 0,
+        previousOutputValueKoinu: 100_000_000,
+        scriptPubkeyHex: string(object(vectors, "transaction"), "script_pubkey_hex"),
+        kind: .p2pkh,
+        redeemScriptHex: nil,
+        multisigThreshold: nil,
+        multisigPublicKeysHex: [],
+        signers: [signer],
+        manuallySelected: false
+    )
+    let request = ComposeTransactionRequest(
+        network: .mainnet,
+        utxos: [utxo],
+        outputs: [],
+        feePolicy: FeePolicy(feeRateKoinuPerKb: 1_000, dustThresholdKoinu: 1),
+        coinSelection: .minInputs,
+        change: change,
+        options: TransactionOptions(version: 1, lockTime: 0, sequence: 0xffff_ffff, sighashType: 1)
+    )
+    let generated = GeneratedMnemonic(phrase: phrase, language: .english, wordCount: 12)
+
+    let rendered: [(String, String)] = [
+        ("Xpriv describing", String(describing: keys.xpriv)),
+        ("Xpriv interpolation", "\(keys.xpriv)"),
+        ("Xpriv reflecting", String(reflecting: keys.xpriv)),
+        ("Optional<Xpriv>", String(describing: Optional(keys.xpriv))),
+        ("[Xpriv]", String(describing: [keys.xpriv])),
+        ("AccountKeySet describing", String(describing: keys)),
+        ("AccountKeySet interpolation", "\(keys)"),
+        ("AccountKeySet reflecting", String(reflecting: keys)),
+        ("GeneratedMnemonic describing", String(describing: generated)),
+        ("GeneratedMnemonic reflecting", String(reflecting: generated)),
+        ("UtxoSigner describing", String(describing: signer)),
+        ("UtxoSigner reflecting", String(reflecting: signer)),
+        ("ChangeDestination describing", String(describing: change)),
+        ("SpendableUtxo describing", String(describing: utxo)),
+        ("ComposeTransactionRequest describing", String(describing: request)),
+        ("ComposeTransactionRequest reflecting", String(reflecting: request)),
+    ]
+    for (label, text) in rendered {
+        #expect(!text.contains(xprivText), "\(label) leaked the xpriv")
+        #expect(!text.contains(wifText), "\(label) leaked the WIF")
+        #expect(!text.contains("abandon"), "\(label) leaked the seed phrase")
+        #expect(text.contains("[redacted]"), "\(label) has no redaction marker")
+    }
+
+    // Public fields stay visible.
+    #expect(String(describing: keys).contains(string(account, "xpub")))
+}
+
 private func parityVectors() throws -> [String: Any] {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()

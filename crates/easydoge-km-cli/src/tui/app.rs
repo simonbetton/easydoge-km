@@ -6,6 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use easydoge_km::{generate_mnemonic, MnemonicOptions, Network};
 use ratatui::widgets::TableState;
+use zeroize::Zeroize;
 
 use super::material::{
     account_context, classify, derive_rows, AccountContext, AccountControl, AddressRow, Branch,
@@ -89,6 +90,16 @@ pub struct App {
     /// Address rows visible in the last frame; drives page navigation.
     pub viewport_rows: u16,
     pub should_quit: bool,
+}
+
+/// Typed or pasted secret text that was never submitted is wiped when the
+/// session ends. The Key Source wipes itself: `SeedPhrase` and the SDK's
+/// `Xpriv` zeroize on drop.
+impl Drop for App {
+    fn drop(&mut self) {
+        self.input.zeroize();
+        self.passphrase.zeroize();
+    }
 }
 
 impl Default for App {
@@ -204,7 +215,7 @@ impl App {
                 self.input_error = None;
             }
             KeyCode::Char('u' | 'U') if ctrl => {
-                self.input.clear();
+                self.input.zeroize();
                 self.input_error = None;
             }
             KeyCode::Char(ch) if !ctrl => {
@@ -222,7 +233,7 @@ impl App {
             KeyCode::Backspace => {
                 self.passphrase.pop();
             }
-            KeyCode::Char('u' | 'U') if ctrl => self.passphrase.clear(),
+            KeyCode::Char('u' | 'U') if ctrl => self.passphrase.zeroize(),
             KeyCode::Char(ch) if !ctrl => self.passphrase.push(ch),
             _ => {}
         }
@@ -263,7 +274,7 @@ impl App {
     }
 
     fn open_inspector(&mut self) {
-        self.input.clear();
+        self.input.zeroize();
         self.input_error = None;
         self.mode = Mode::Inspect;
     }
@@ -275,8 +286,8 @@ impl App {
     }
 
     fn cancel_input(&mut self) {
-        self.input.clear();
-        self.passphrase.clear();
+        self.input.zeroize();
+        self.passphrase.zeroize();
         self.pending = None;
         self.jump.clear();
         self.input_error = None;
@@ -287,13 +298,13 @@ impl App {
     fn submit_input(&mut self) {
         match classify(&self.input) {
             Ok(Classified::SeedPhrase(seed)) => {
-                self.input.clear();
-                self.passphrase.clear();
+                self.input.zeroize();
+                self.passphrase.zeroize();
                 self.pending = Some(seed);
                 self.mode = Mode::Passphrase;
             }
             Ok(Classified::Material(material)) => {
-                self.input.clear();
+                self.input.zeroize();
                 self.adopt(Source::Pasted(material));
             }
             Err(error) => self.input_error = Some(error.to_string()),
@@ -352,10 +363,10 @@ impl App {
 
     fn generate(&mut self) {
         match generate_mnemonic(MnemonicOptions::default()) {
-            Ok(generated) => {
+            Ok(mut generated) => {
                 let word_count = generated.word_count;
                 self.source = Source::Generated(SeedPhrase {
-                    phrase: generated.phrase,
+                    phrase: std::mem::take(&mut generated.phrase),
                     passphrase: None,
                     language: generated.language,
                     word_count,
@@ -937,6 +948,17 @@ mod tests {
 
         press(&mut app, KeyCode::Char('x'));
         assert!(app.notice.text.contains("Already"));
+    }
+
+    #[test]
+    fn generated_key_source_keeps_the_whole_seed_phrase() {
+        let mut app = App::new();
+
+        press(&mut app, KeyCode::Char('g'));
+        match &app.source {
+            Source::Generated(seed) => assert_eq!(seed.words().len(), 24),
+            other => panic!("expected a generated mnemonic, got {other:?}"),
+        }
     }
 
     #[test]

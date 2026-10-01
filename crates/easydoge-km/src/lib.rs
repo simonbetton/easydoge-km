@@ -1,5 +1,6 @@
 mod encoding;
 mod keys;
+pub mod limits;
 mod message;
 mod multisig;
 mod network;

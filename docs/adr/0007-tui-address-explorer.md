@@ -10,10 +10,10 @@ The Ratatui surface grew out of a question-and-answer demo: a fixed ASCII header
 
 ## Decision
 
-Rebuild the TUI as an address explorer in its own `tui` module, split into pure state (`app`), classification and derivation (`material`), rendering (`ui`), and styling (`theme`). The app keeps one Key Source (sample, generated, or Pasted Material) and caches the account xpub for the current account and network; a window of 64 indices is derived from that xpub and shown as a table with a cursor. Moving the cursor, changing the account, switching network, or adopting a new source re-derives immediately.
+Rebuild the TUI as an address explorer in its own `tui` module, split into state and key handling (`app`), classification and derivation (`material`), rendering (`ui`), and styling (`theme`). The app keeps one Key Source (sample, generated, or Pasted Material) and caches the account xpub for the current account and network; a window of 64 indices is derived from that xpub and shown as a table with a cursor. Moving within the window uses cached rows; moving outside it derives a new window. Changing the account, network, or source rebuilds the account context and rows.
 
 The layout is responsive: two columns from 80 columns wide, stacked below that, and a resize prompt under 40×10. Input that may contain secrets is collected in masked popups, and secrets stay redacted until the user reveals them. Extended keys are classified on the network their version bytes imply (`dg…` mainnet, `tp…` testnet or regtest) before the core's legacy-prefix fallback is used.
 
 ## Consequences
 
-Address exploration no longer needs explicit "create address" keys, and the seed stretch runs once per account instead of once per address. State transitions and rendering are exercised against a headless backend, so the redaction rules and the responsive layout are enforced by tests rather than by review. The scriptable CLI subcommands are unchanged; only the interactive surface moved.
+Address exploration no longer needs explicit "create address" keys. For mnemonic sources, the seed stretch runs when the account context is rebuilt instead of once per address. State transitions and rendering are exercised with a headless backend, including tests of redaction and responsive layouts. The scriptable CLI subcommands are unchanged; only the interactive surface moved.

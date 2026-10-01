@@ -613,7 +613,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 }
 
 
-public struct AccountKeySet: Equatable, Hashable {
+public struct AccountKeySet: Equatable, Hashable, CustomDebugStringConvertible {
     public var network: Network
     public var account: UInt32
     public var accountPath: String
@@ -633,6 +633,17 @@ public struct AccountKeySet: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(
+            FfiConverterTypeAccountKeySet_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -745,7 +756,7 @@ public func FfiConverterTypeAuditedInput_lower(_ value: AuditedInput) -> RustBuf
 }
 
 
-public struct ChangeDestination: Equatable, Hashable {
+public struct ChangeDestination: Equatable, Hashable, CustomDebugStringConvertible {
     public var address: String?
     public var xpriv: Xpriv?
     public var derivationPath: String?
@@ -761,6 +772,17 @@ public struct ChangeDestination: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(
+            FfiConverterTypeChangeDestination_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -803,7 +825,7 @@ public func FfiConverterTypeChangeDestination_lower(_ value: ChangeDestination) 
 }
 
 
-public struct ComposeTransactionRequest: Equatable, Hashable {
+public struct ComposeTransactionRequest: Equatable, Hashable, CustomDebugStringConvertible {
     public var network: Network
     public var utxos: [SpendableUtxo]
     public var outputs: [TransactionOutput]
@@ -827,6 +849,17 @@ public struct ComposeTransactionRequest: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_composetransactionrequest_uniffi_trait_debug(
+            FfiConverterTypeComposeTransactionRequest_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -1107,7 +1140,7 @@ public func FfiConverterTypeFeePolicy_lower(_ value: FeePolicy) -> RustBuffer {
 }
 
 
-public struct GeneratedMnemonic: Equatable, Hashable {
+public struct GeneratedMnemonic: Equatable, Hashable, CustomDebugStringConvertible {
     public var phrase: String
     public var language: Language
     public var wordCount: UInt16
@@ -1123,6 +1156,17 @@ public struct GeneratedMnemonic: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_generatedmnemonic_uniffi_trait_debug(
+            FfiConverterTypeGeneratedMnemonic_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -1735,7 +1779,7 @@ public func FfiConverterTypeSkippedInput_lower(_ value: SkippedInput) -> RustBuf
 }
 
 
-public struct SpendableUtxo: Equatable, Hashable {
+public struct SpendableUtxo: Equatable, Hashable, CustomDebugStringConvertible {
     public var txid: String
     public var vout: UInt32
     public var previousOutputValueKoinu: UInt64
@@ -1765,6 +1809,17 @@ public struct SpendableUtxo: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_spendableutxo_uniffi_trait_debug(
+            FfiConverterTypeSpendableUtxo_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -1949,7 +2004,7 @@ public func FfiConverterTypeTransactionOutput_lower(_ value: TransactionOutput) 
 }
 
 
-public struct UtxoSigner: Equatable, Hashable {
+public struct UtxoSigner: Equatable, Hashable, CustomDebugStringConvertible {
     public var kind: UtxoSignerKind
     public var wif: String?
     public var xpriv: Xpriv?
@@ -1967,6 +2022,17 @@ public struct UtxoSigner: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_utxosigner_uniffi_trait_debug(
+            FfiConverterTypeUtxoSigner_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)
@@ -2073,7 +2139,7 @@ public func FfiConverterTypeWifInfo_lower(_ value: WifInfo) -> RustBuffer {
 }
 
 
-public struct Xpriv: Equatable, Hashable {
+public struct Xpriv: Equatable, Hashable, CustomDebugStringConvertible {
     public var network: Network
     public var encoded: String
 
@@ -2087,6 +2153,17 @@ public struct Xpriv: Equatable, Hashable {
 
 
 
+// The local Rust `Debug` implementation.
+public var debugDescription: String {
+    return try!  FfiConverterString.lift(
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_easydoge_km_ffi_fn_method_xpriv_uniffi_trait_debug(
+            FfiConverterTypeXpriv_lower(self),uniffiCallStatus
+    )
+}
+    )
+}
 }
 
 #if compiler(>=6)

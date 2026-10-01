@@ -12,11 +12,22 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
+  - package-ecosystem: npm
+    directory: /tools/bitcoinjs-cross-check
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
   - package-ecosystem: gradle
     directory: /bindings/kotlin
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # bindings/kotlin/gradlew is a jar-free verifying launcher, not the stock
+      # Gradle wrapper. Dependabot's wrapper update replaces it with the stock
+      # script. Bump Gradle by hand: docs/RELEASE.md, "Pinned Build Inputs".
+      - dependency-name: "gradle-wrapper"
 
   - package-ecosystem: github-actions
     directory: /

@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The SDK already uses shared parity vectors across Rust, Swift, Kotlin, Expo, and CLI surfaces, but those tests all ultimately exercise the same Rust implementation. Key-derivation regressions can still pass if the canonical implementation and fixtures drift together.
+Rust core, UniFFI, Swift, and Kotlin tests read shared parity vectors; CLI/TUI tests reuse selected fixture values. Those runtime tests ultimately exercise the same Rust implementation. Expo is typechecked but has no native runtime parity suite. Key-derivation regressions can still pass if the canonical implementation and fixtures drift together.
 
 Dogecoin BIP39/BIP32/BIP44 behavior also depends on network constants that are easy to accidentally default to Bitcoin values, especially extended-key version bytes.
 

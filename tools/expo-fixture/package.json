@@ -1,0 +1,13 @@
+{
+  "name": "easydoge-km-expo-fixture",
+  "version": "0.0.0",
+  "description": "Minimal Expo host app used by scripts/verify-expo-native.sh to compile @easydoge/km-expo. Not published.",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "dependencies": {
+    "expo": "57.0.26",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  }
+}
