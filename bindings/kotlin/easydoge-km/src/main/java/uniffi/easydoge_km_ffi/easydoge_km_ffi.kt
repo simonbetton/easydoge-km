@@ -99,7 +99,15 @@ internal open class ForeignBytes : Structure() {
     class ByValue : ForeignBytes(), Structure.ByValue
 }
 
-// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+// Converter for `&[u8]` / `[ByRef] bytes` AND `&mut [u8]` / `[ByMutRef] bytes`
+// arguments.
+//
+// Both take the identical zero-copy path: a direct `ByteBuffer`'s native
+// address is handed to Rust as a borrow for the duration of the (synchronous)
+// call. For `&mut [u8]` arguments Rust may WRITE through this pointer, and the
+// writes land directly in the caller's `ByteBuffer` — there is no read-only
+// direct-buffer distinction at the JNA layer, so callers that pass a buffer
+// they expect to stay unmodified must not use a `&mut [u8]` function.
 //
 // Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
 // and only in argument position. `lift`, `read`, `write`, and
@@ -109,6 +117,7 @@ internal open class ForeignBytes : Structure() {
 //
 // The provided `ByteBuffer` MUST be direct — only direct buffers have a
 // stable native address that JNA can expose via `getDirectBufferPointer`.
+// Rust borrows [position, limit); position and limit are not changed.
 // The returned `ForeignBytes.ByValue` is only valid for the duration of
 // the FFI call; the Rust side treats it as a borrow.
 internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
@@ -119,7 +128,8 @@ internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, Forei
         fb.len = remaining
         // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
         // and pass null. The Rust side treats (null, 0) as &[].
-        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)
+        // getDirectBufferPointer ignores position(), so offset the pointer by it.
+        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)?.share(value.position().toLong())
         return fb
     }
 
@@ -261,23 +271,71 @@ interface UniffiRustCallStatusErrorHandler<E> {
     fun lift(error_buf: RustBuffer.ByValue): E;
 }
 
+/**
+ * Reusable native memory for the `RustCallStatus` out-parameter of Kotlin -> Rust calls.
+ *
+ * Every FFI function that can fail takes a pointer to a `RustCallStatus`, which Rust writes to
+ * only when the call fails. Passing a `UniffiRustCallStatus` JNA `Structure` for it means
+ * allocating the Structure (and its nested `RustBuffer` and native `Memory`) on every call, and
+ * JNA copying it to and from native memory by reflection before and after the call. That costs
+ * far more than the call itself. Instead, FFI functions take the status as a plain `Pointer` to
+ * this buffer, and a `Structure` is only built when Rust reports an error.
+ *
+ * Rust expects the caller to have set the status to success before the call, and leaves it alone
+ * when the call succeeds. One buffer per thread is enough, even when a call re-enters Rust from a
+ * callback interface on the same thread, as long as whoever reads a failure also resets the
+ * buffer (`takeFailure`). The buffer is then all zeros at every moment except between Rust
+ * writing a failure and the caller reading it, so an inner call's failure can't become the
+ * result of the call it's nested in, and a successful call reads the zeros Rust left untouched.
+ *
+ * Thread safety: each thread has its own buffer (a `ThreadLocal`), and Rust only writes to the
+ * status during the call, on the calling thread, so a buffer is never shared between threads.
+ *
+ * @suppress
+ */
+internal object UniffiRustCallStatusBuffer {
+    private val size: Int = UniffiRustCallStatus().size()
+
+    // Not `ThreadLocal.withInitial`, which needs Android API level 26.
+    private val buffer = object : ThreadLocal<com.sun.jna.Memory>() {
+        override fun initialValue() = com.sun.jna.Memory(size.toLong()).also { it.clear() }
+    }
+
+    // get() is nullable on some platforms (Android) and not on others (JDK).
+    // `!!` ensures it works in both environments.
+    // `get()` never returns a null value since we implement `initialValue()`.
+    fun get(): Pointer = buffer.get()!!
+
+    /** Copy a failed call's status out for the error handlers and reset the buffer to success. */
+    fun takeFailure(buffer: Pointer): UniffiRustCallStatus {
+        val status = UniffiRustCallStatus()
+        status.pointer.write(0, buffer.getByteArray(0, size), 0, size)
+        status.read()
+        buffer.setByte(0, UNIFFI_CALL_SUCCESS)
+        return status
+    }
+}
+
 // Helpers for calling Rust
 // In practice we usually need to be synchronized to call this safely, so it doesn't
 // synchronize itself
 
 // Call a rust function that returns a Result<>.  Pass in the Error class companion that corresponds to the Err
-private inline fun <U, E: kotlin.Exception> uniffiRustCallWithError(errorHandler: UniffiRustCallStatusErrorHandler<E>, callback: (UniffiRustCallStatus) -> U): U {
-    var status = UniffiRustCallStatus()
+//
+// `callback` receives a pointer to the `RustCallStatus` to pass to the FFI function.
+private inline fun <U, E: kotlin.Exception> uniffiRustCallWithError(errorHandler: UniffiRustCallStatusErrorHandler<E>, callback: (Pointer) -> U): U {
+    val status = UniffiRustCallStatusBuffer.get()
     val return_value = callback(status)
-    uniffiCheckCallStatus(errorHandler, status)
+    // `code` is the first field, a single byte.
+    if (status.getByte(0) != UNIFFI_CALL_SUCCESS) {
+        uniffiHandleCallError(errorHandler, UniffiRustCallStatusBuffer.takeFailure(status))
+    }
     return return_value
 }
 
-// Check UniffiRustCallStatus and throw an error if the call wasn't successful
-private fun<E: kotlin.Exception> uniffiCheckCallStatus(errorHandler: UniffiRustCallStatusErrorHandler<E>, status: UniffiRustCallStatus) {
-    if (status.isSuccess()) {
-        return
-    } else if (status.isError()) {
+// Throw the exception for a failed call's UniffiRustCallStatus
+private fun<E: kotlin.Exception> uniffiHandleCallError(errorHandler: UniffiRustCallStatusErrorHandler<E>, status: UniffiRustCallStatus): Nothing {
+    if (status.isError()) {
         throw errorHandler.lift(status.error_buf)
     } else if (status.isPanic()) {
         // when the rust code sees a panic, it tries to construct a rustbuffer
@@ -289,7 +347,7 @@ private fun<E: kotlin.Exception> uniffiCheckCallStatus(errorHandler: UniffiRustC
             throw InternalException("Rust panic")
         }
     } else {
-        throw InternalException("Unknown rust call status: $status.code")
+        throw InternalException("Unknown rust call status: ${status.code}")
     }
 }
 
@@ -306,7 +364,7 @@ object UniffiNullRustCallStatusErrorHandler: UniffiRustCallStatusErrorHandler<In
 }
 
 // Call a rust function that returns a plain value
-private inline fun <U> uniffiRustCall(callback: (UniffiRustCallStatus) -> U): U {
+private inline fun <U> uniffiRustCall(callback: (Pointer) -> U): U {
     return uniffiRustCallWithError(UniffiNullRustCallStatusErrorHandler, callback)
 }
 
@@ -317,7 +375,7 @@ internal inline fun<T> uniffiTraitInterfaceCall(
 ) {
     try {
         writeReturn(makeCall())
-    } catch(e: kotlin.Exception) {
+    } catch(e: kotlin.Throwable) {
         val err = try { e.stackTraceToString() } catch(_: Throwable) { "" }
         callStatus.code = UNIFFI_CALL_UNEXPECTED_ERROR
         callStatus.error_buf = FfiConverterString.lower(err)
@@ -332,7 +390,7 @@ internal inline fun<T, reified E: Throwable> uniffiTraitInterfaceCallWithError(
 ) {
     try {
         writeReturn(makeCall())
-    } catch(e: kotlin.Exception) {
+    } catch(e: kotlin.Throwable) {
         if (e is E) {
             callStatus.code = UNIFFI_CALL_ERROR
             callStatus.error_buf = lowerError(e)
@@ -729,75 +787,76 @@ internal object UniffiLib {
 
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "easydoge_km_ffi"))
+        uniffiEnsureInitialized()
 
     }
 
     internal fun ensureInitialized() = Unit
-    external fun uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_accountkeyset_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_changedestination_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_composetransactionrequest_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_composetransactionrequest_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_generatedmnemonic_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_generatedmnemonic_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_spendableutxo_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_spendableutxo_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_utxosigner_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_utxosigner_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_method_xpriv_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_method_xpriv_uniffi_trait_debug(`ptr`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_account_xpriv_from_mnemonic(`phrase`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,`account`: Int,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_account_xpriv_from_mnemonic(`phrase`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,`account`: Int,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_address_from_wif(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_address_from_wif(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(`envelopes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_combine_signing_envelopes(`envelopes`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_compose_and_sign_transaction(`request`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_create_multisig_descriptor(`network`: RustBuffer.ByValue,`threshold`: Byte,`cosignerXpubs`: RustBuffer.ByValue,`childPath`: RustBuffer.ByValue,`sorted`: Byte,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_create_multisig_descriptor(`network`: RustBuffer.ByValue,`threshold`: Byte,`cosignerXpubs`: RustBuffer.ByValue,`childPath`: RustBuffer.ByValue,`sorted`: Byte,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpriv(`xpriv`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpriv(`xpriv`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpub(`xpub`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_derive_address_from_xpub(`xpub`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpriv(`xpriv`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpriv(`xpriv`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpub(`xpub`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_derive_path_from_xpub(`xpub`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_finalize_signing_envelope(`envelope`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_finalize_signing_envelope(`envelope`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_generate_mnemonic(`options`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_generate_mnemonic(`options`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_inspect_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_inspect_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_inspect_xpub(`xpub`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_inspect_xpub(`xpub`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_mnemonic_to_seed_hex(`phrase`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_mnemonic_to_seed_hex(`phrase`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_sign_message(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_sign_message(`network`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_sign_p2pkh_transaction(`network`: RustBuffer.ByValue,`unsignedTxHex`: RustBuffer.ByValue,`inputIndex`: Long,`scriptPubkeyHex`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,`sighashType`: Int,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_sign_p2pkh_transaction(`network`: RustBuffer.ByValue,`unsignedTxHex`: RustBuffer.ByValue,`inputIndex`: Long,`scriptPubkeyHex`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,`sighashType`: Int,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_sign_signing_envelope(`envelope`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_sign_signing_envelope(`envelope`: RustBuffer.ByValue,`wif`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_validate_address(`network`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_validate_address(`network`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): Byte
-    external fun uniffi_easydoge_km_ffi_fn_func_validate_mnemonic(`phrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_validate_mnemonic(`phrase`: RustBuffer.ByValue,`language`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): Byte
-    external fun uniffi_easydoge_km_ffi_fn_func_verify_message(`network`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,`signatureBase64`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_verify_message(`network`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,`signatureBase64`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): Byte
-    external fun uniffi_easydoge_km_ffi_fn_func_wif_from_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_wif_from_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun uniffi_easydoge_km_ffi_fn_func_xpub_from_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_easydoge_km_ffi_fn_func_xpub_from_xpriv(`xpriv`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun ffi_easydoge_km_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun ffi_easydoge_km_ffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
-    external fun ffi_easydoge_km_ffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: Pointer,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
     external fun ffi_easydoge_km_ffi_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -805,7 +864,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_u8(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: Pointer,
     ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -813,7 +872,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_i8(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: Pointer,
     ): Byte
     external fun ffi_easydoge_km_ffi_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -821,7 +880,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_u16(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: Pointer,
     ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -829,7 +888,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_i16(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: Pointer,
     ): Short
     external fun ffi_easydoge_km_ffi_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -837,7 +896,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_u32(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: Pointer,
     ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -845,7 +904,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_i32(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: Pointer,
     ): Int
     external fun ffi_easydoge_km_ffi_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -853,7 +912,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_u64(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: Pointer,
     ): Long
     external fun ffi_easydoge_km_ffi_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -861,7 +920,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_i64(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: Pointer,
     ): Long
     external fun ffi_easydoge_km_ffi_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -869,7 +928,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_f32(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: Pointer,
     ): Float
     external fun ffi_easydoge_km_ffi_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -877,7 +936,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_f64(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: Pointer,
     ): Double
     external fun ffi_easydoge_km_ffi_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -885,7 +944,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_rust_buffer(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: Pointer,
     ): RustBuffer.ByValue
     external fun ffi_easydoge_km_ffi_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
@@ -893,7 +952,7 @@ internal object UniffiLib {
     ): Unit
     external fun ffi_easydoge_km_ffi_rust_future_free_void(`handle`: Long,
     ): Unit
-    external fun ffi_easydoge_km_ffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+    external fun ffi_easydoge_km_ffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: Pointer,
     ): Unit
 
 
@@ -901,7 +960,7 @@ internal object UniffiLib {
 
 private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
     // Get the bindings contract version from our ComponentInterface
-    val bindings_contract_version = 30
+    val bindings_contract_version = 33
     // Get the scaffolding contract version by calling the into the dylib
     val scaffolding_contract_version = lib.ffi_easydoge_km_ffi_uniffi_contract_version()
     if (bindings_contract_version != scaffolding_contract_version) {
@@ -910,70 +969,70 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() and 0xFFFF) != 58952) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() and 0xFFFF) != 43533) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() and 0xFFFF) != 62494) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_address_from_wif() and 0xFFFF) != 55972) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() and 0xFFFF) != 53844) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() and 0xFFFF) != 25471) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() and 0xFFFF) != 31231) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() and 0xFFFF) != 23095) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() and 0xFFFF) != 14743) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() and 0xFFFF) != 24001) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() and 0xFFFF) != 12406) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() and 0xFFFF) != 57481) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() and 0xFFFF) != 15360) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() and 0xFFFF) != 59098) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() and 0xFFFF) != 24894) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() and 0xFFFF) != 27538) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() and 0xFFFF) != 50174) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() and 0xFFFF) != 26217) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() and 0xFFFF) != 6805) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() and 0xFFFF) != 38080) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() and 0xFFFF) != 50715) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() and 0xFFFF) != 16372) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() and 0xFFFF) != 62343) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() and 0xFFFF) != 58806) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() and 0xFFFF) != 30445) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() and 0xFFFF) != 53413) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() and 0xFFFF) != 45842) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() and 0xFFFF) != 13457) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() and 0xFFFF) != 54472) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_message() and 0xFFFF) != 62181) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() and 0xFFFF) != 9304) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() and 0xFFFF) != 26357) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() and 0xFFFF) != 24006) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() and 0xFFFF) != 14083) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() and 0xFFFF) != 61885) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_address() and 0xFFFF) != 65521) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() and 0xFFFF) != 59929) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() and 0xFFFF) != 9623) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() and 0xFFFF) != 42166) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_verify_message() and 0xFFFF) != 13870) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() and 0xFFFF) != 13195) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() and 0xFFFF) != 22146) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() and 0xFFFF) != 15071) {
+    if ((lib.uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() and 0xFFFF) != 27823) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }

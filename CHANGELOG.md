@@ -15,6 +15,10 @@ The project uses semantic versioning for public APIs once it reaches `1.0.0`. Du
 
 ### Changed
 
+- Upgraded UniFFI from 0.32.2 to 0.33.0 and regenerated the committed Swift and Kotlin bindings. Rebuild native libraries together with these bindings or UniFFI checksum checks will fail.
+- Refreshed Rust workspace dependencies: `clap` 4.6.10 and `sha2` 0.11.2, plus compatible transitive updates.
+- Updated the Expo native fixture from Expo 58.0.26 / React 19.3.0 to Expo 58.1.0 / React 19.3.1. React Native stays at 0.88.1, the version Expo SDK 58 bundles.
+- Updated the Android Gradle Plugin from 9.5.2 to 9.5.3. Gradle stays at 9.9.2.
 - Upgraded `bip39` to 3.0.0 and adapted mnemonic generation to its `WordCount` API. The SDK continues to accept 12, 15, 18, 21, or 24 words and returns `InvalidWordCount` for other counts.
 - Corrected documentation to distinguish implemented APIs from runtime test coverage, document current storage and passphrase limitations, and clarify native integration and release requirements.
 - Redesigned the Ratatui TUI as a live address explorer. The fixed question/answer panels are replaced by a responsive layout (side by side from 80 columns, stacked below that) with a source panel, a receive/change address table that re-derives as you move, and a selected-address panel showing the derivation path and public key. New keys: `t` cycles networks, `:` jumps to an index, `x` returns to the sample mnemonic, `?` opens a key reference, and `Ctrl+C` quits from any mode. The paste inspector and passphrase prompt are masked popups. The `i`/`o`/`d` derivation keys and the `v` sample-validation key were removed because addresses now derive automatically, and `Esc` hides revealed secrets instead of quitting.

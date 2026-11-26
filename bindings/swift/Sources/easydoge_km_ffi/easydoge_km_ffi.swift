@@ -46,6 +46,13 @@ fileprivate extension ForeignBytes {
             data: rawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
         )
     }
+
+    init(mutableRawBufferPointer: UnsafeMutableRawBufferPointer) {
+        self.init(
+            len: Int32(mutableRawBufferPointer.count),
+            data: mutableRawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+        )
+    }
 }
 
 // Converter for `&[u8]` / `[ByRef] bytes` arguments.
@@ -84,6 +91,21 @@ fileprivate enum FfiConverterByRefBytes: FfiConverter {
 
     static func write(_ value: Data, into buf: inout [UInt8]) {
         fatalError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
+}
+
+// Converter for `&mut [u8]` / `[ByMutRef] bytes` arguments.
+//
+// Zero-copy and foreign -> Rust only, like `FfiConverterByRefBytes`, but the
+// buffer is writable: Rust's writes through the pointer land directly in the
+// caller's `Data`. The scope-bound `lower(_:_body:)` takes the `Data` `inout`
+// and runs the full FFI call inside `withUnsafeMutableBytes`, whose pointer is
+// only valid for the closure's duration.
+fileprivate enum FfiConverterByMutRefBytes {
+    static func lower<R>(_ value: inout Data, _ body: (ForeignBytes) throws -> R) rethrows -> R {
+        return try value.withUnsafeMutableBytes { rawBuf in
+            try body(ForeignBytes(mutableRawBufferPointer: rawBuf))
+        }
     }
 }
 
@@ -685,7 +707,7 @@ public func FfiConverterTypeAccountKeySet_lift(_ buf: RustBuffer) throws -> Acco
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAccountKeySet_lower(_ value: AccountKeySet) -> RustBuffer {
+@Sendable public func FfiConverterTypeAccountKeySet_lower(_ value: AccountKeySet) -> RustBuffer {
     return FfiConverterTypeAccountKeySet.lower(value)
 }
 
@@ -751,7 +773,7 @@ public func FfiConverterTypeAuditedInput_lift(_ buf: RustBuffer) throws -> Audit
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeAuditedInput_lower(_ value: AuditedInput) -> RustBuffer {
+@Sendable public func FfiConverterTypeAuditedInput_lower(_ value: AuditedInput) -> RustBuffer {
     return FfiConverterTypeAuditedInput.lower(value)
 }
 
@@ -820,7 +842,7 @@ public func FfiConverterTypeChangeDestination_lift(_ buf: RustBuffer) throws -> 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeChangeDestination_lower(_ value: ChangeDestination) -> RustBuffer {
+@Sendable public func FfiConverterTypeChangeDestination_lower(_ value: ChangeDestination) -> RustBuffer {
     return FfiConverterTypeChangeDestination.lower(value)
 }
 
@@ -905,7 +927,7 @@ public func FfiConverterTypeComposeTransactionRequest_lift(_ buf: RustBuffer) th
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeComposeTransactionRequest_lower(_ value: ComposeTransactionRequest) -> RustBuffer {
+@Sendable public func FfiConverterTypeComposeTransactionRequest_lower(_ value: ComposeTransactionRequest) -> RustBuffer {
     return FfiConverterTypeComposeTransactionRequest.lower(value)
 }
 
@@ -1011,7 +1033,7 @@ public func FfiConverterTypeComposeTransactionResult_lift(_ buf: RustBuffer) thr
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeComposeTransactionResult_lower(_ value: ComposeTransactionResult) -> RustBuffer {
+@Sendable public func FfiConverterTypeComposeTransactionResult_lower(_ value: ComposeTransactionResult) -> RustBuffer {
     return FfiConverterTypeComposeTransactionResult.lower(value)
 }
 
@@ -1081,7 +1103,7 @@ public func FfiConverterTypeExtendedKeyInfo_lift(_ buf: RustBuffer) throws -> Ex
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeExtendedKeyInfo_lower(_ value: ExtendedKeyInfo) -> RustBuffer {
+@Sendable public func FfiConverterTypeExtendedKeyInfo_lower(_ value: ExtendedKeyInfo) -> RustBuffer {
     return FfiConverterTypeExtendedKeyInfo.lower(value)
 }
 
@@ -1135,7 +1157,7 @@ public func FfiConverterTypeFeePolicy_lift(_ buf: RustBuffer) throws -> FeePolic
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeFeePolicy_lower(_ value: FeePolicy) -> RustBuffer {
+@Sendable public func FfiConverterTypeFeePolicy_lower(_ value: FeePolicy) -> RustBuffer {
     return FfiConverterTypeFeePolicy.lower(value)
 }
 
@@ -1204,7 +1226,7 @@ public func FfiConverterTypeGeneratedMnemonic_lift(_ buf: RustBuffer) throws -> 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeGeneratedMnemonic_lower(_ value: GeneratedMnemonic) -> RustBuffer {
+@Sendable public func FfiConverterTypeGeneratedMnemonic_lower(_ value: GeneratedMnemonic) -> RustBuffer {
     return FfiConverterTypeGeneratedMnemonic.lower(value)
 }
 
@@ -1262,7 +1284,7 @@ public func FfiConverterTypeMessageSignature_lift(_ buf: RustBuffer) throws -> M
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMessageSignature_lower(_ value: MessageSignature) -> RustBuffer {
+@Sendable public func FfiConverterTypeMessageSignature_lower(_ value: MessageSignature) -> RustBuffer {
     return FfiConverterTypeMessageSignature.lower(value)
 }
 
@@ -1316,7 +1338,7 @@ public func FfiConverterTypeMnemonicOptions_lift(_ buf: RustBuffer) throws -> Mn
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMnemonicOptions_lower(_ value: MnemonicOptions) -> RustBuffer {
+@Sendable public func FfiConverterTypeMnemonicOptions_lower(_ value: MnemonicOptions) -> RustBuffer {
     return FfiConverterTypeMnemonicOptions.lower(value)
 }
 
@@ -1394,7 +1416,7 @@ public func FfiConverterTypeMultisigDescriptor_lift(_ buf: RustBuffer) throws ->
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMultisigDescriptor_lower(_ value: MultisigDescriptor) -> RustBuffer {
+@Sendable public func FfiConverterTypeMultisigDescriptor_lower(_ value: MultisigDescriptor) -> RustBuffer {
     return FfiConverterTypeMultisigDescriptor.lower(value)
 }
 
@@ -1456,7 +1478,7 @@ public func FfiConverterTypePathAddress_lift(_ buf: RustBuffer) throws -> PathAd
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypePathAddress_lower(_ value: PathAddress) -> RustBuffer {
+@Sendable public func FfiConverterTypePathAddress_lower(_ value: PathAddress) -> RustBuffer {
     return FfiConverterTypePathAddress.lower(value)
 }
 
@@ -1510,7 +1532,7 @@ public func FfiConverterTypeSignedTransaction_lift(_ buf: RustBuffer) throws -> 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSignedTransaction_lower(_ value: SignedTransaction) -> RustBuffer {
+@Sendable public func FfiConverterTypeSignedTransaction_lower(_ value: SignedTransaction) -> RustBuffer {
     return FfiConverterTypeSignedTransaction.lower(value)
 }
 
@@ -1576,7 +1598,7 @@ public func FfiConverterTypeSigningEnvelope_lift(_ buf: RustBuffer) throws -> Si
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSigningEnvelope_lower(_ value: SigningEnvelope) -> RustBuffer {
+@Sendable public func FfiConverterTypeSigningEnvelope_lower(_ value: SigningEnvelope) -> RustBuffer {
     return FfiConverterTypeSigningEnvelope.lower(value)
 }
 
@@ -1654,7 +1676,7 @@ public func FfiConverterTypeSigningEnvelopeInput_lift(_ buf: RustBuffer) throws 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSigningEnvelopeInput_lower(_ value: SigningEnvelopeInput) -> RustBuffer {
+@Sendable public func FfiConverterTypeSigningEnvelopeInput_lower(_ value: SigningEnvelopeInput) -> RustBuffer {
     return FfiConverterTypeSigningEnvelopeInput.lower(value)
 }
 
@@ -1712,7 +1734,7 @@ public func FfiConverterTypeSigningEnvelopeSignature_lift(_ buf: RustBuffer) thr
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSigningEnvelopeSignature_lower(_ value: SigningEnvelopeSignature) -> RustBuffer {
+@Sendable public func FfiConverterTypeSigningEnvelopeSignature_lower(_ value: SigningEnvelopeSignature) -> RustBuffer {
     return FfiConverterTypeSigningEnvelopeSignature.lower(value)
 }
 
@@ -1774,7 +1796,7 @@ public func FfiConverterTypeSkippedInput_lift(_ buf: RustBuffer) throws -> Skipp
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSkippedInput_lower(_ value: SkippedInput) -> RustBuffer {
+@Sendable public func FfiConverterTypeSkippedInput_lower(_ value: SkippedInput) -> RustBuffer {
     return FfiConverterTypeSkippedInput.lower(value)
 }
 
@@ -1871,7 +1893,7 @@ public func FfiConverterTypeSpendableUtxo_lift(_ buf: RustBuffer) throws -> Spen
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSpendableUtxo_lower(_ value: SpendableUtxo) -> RustBuffer {
+@Sendable public func FfiConverterTypeSpendableUtxo_lower(_ value: SpendableUtxo) -> RustBuffer {
     return FfiConverterTypeSpendableUtxo.lower(value)
 }
 
@@ -1933,7 +1955,7 @@ public func FfiConverterTypeTransactionOptions_lift(_ buf: RustBuffer) throws ->
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTransactionOptions_lower(_ value: TransactionOptions) -> RustBuffer {
+@Sendable public func FfiConverterTypeTransactionOptions_lower(_ value: TransactionOptions) -> RustBuffer {
     return FfiConverterTypeTransactionOptions.lower(value)
 }
 
@@ -1999,7 +2021,7 @@ public func FfiConverterTypeTransactionOutput_lift(_ buf: RustBuffer) throws -> 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTransactionOutput_lower(_ value: TransactionOutput) -> RustBuffer {
+@Sendable public func FfiConverterTypeTransactionOutput_lower(_ value: TransactionOutput) -> RustBuffer {
     return FfiConverterTypeTransactionOutput.lower(value)
 }
 
@@ -2072,7 +2094,7 @@ public func FfiConverterTypeUtxoSigner_lift(_ buf: RustBuffer) throws -> UtxoSig
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeUtxoSigner_lower(_ value: UtxoSigner) -> RustBuffer {
+@Sendable public func FfiConverterTypeUtxoSigner_lower(_ value: UtxoSigner) -> RustBuffer {
     return FfiConverterTypeUtxoSigner.lower(value)
 }
 
@@ -2134,7 +2156,7 @@ public func FfiConverterTypeWifInfo_lift(_ buf: RustBuffer) throws -> WifInfo {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeWifInfo_lower(_ value: WifInfo) -> RustBuffer {
+@Sendable public func FfiConverterTypeWifInfo_lower(_ value: WifInfo) -> RustBuffer {
     return FfiConverterTypeWifInfo.lower(value)
 }
 
@@ -2199,7 +2221,7 @@ public func FfiConverterTypeXpriv_lift(_ buf: RustBuffer) throws -> Xpriv {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeXpriv_lower(_ value: Xpriv) -> RustBuffer {
+@Sendable public func FfiConverterTypeXpriv_lower(_ value: Xpriv) -> RustBuffer {
     return FfiConverterTypeXpriv.lower(value)
 }
 
@@ -2253,7 +2275,7 @@ public func FfiConverterTypeXpub_lift(_ buf: RustBuffer) throws -> Xpub {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeXpub_lower(_ value: Xpub) -> RustBuffer {
+@Sendable public func FfiConverterTypeXpub_lower(_ value: Xpub) -> RustBuffer {
     return FfiConverterTypeXpub.lower(value)
 }
 
@@ -2332,7 +2354,7 @@ public func FfiConverterTypeCoinSelectionStrategy_lift(_ buf: RustBuffer) throws
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCoinSelectionStrategy_lower(_ value: CoinSelectionStrategy) -> RustBuffer {
+@Sendable public func FfiConverterTypeCoinSelectionStrategy_lower(_ value: CoinSelectionStrategy) -> RustBuffer {
     return FfiConverterTypeCoinSelectionStrategy.lower(value)
 }
 
@@ -2408,7 +2430,7 @@ public func FfiConverterTypeFfiError_lift(_ buf: RustBuffer) throws -> FfiError 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
+@Sendable public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
     return FfiConverterTypeFfiError.lower(value)
 }
 
@@ -2529,7 +2551,7 @@ public func FfiConverterTypeLanguage_lift(_ buf: RustBuffer) throws -> Language 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeLanguage_lower(_ value: Language) -> RustBuffer {
+@Sendable public func FfiConverterTypeLanguage_lower(_ value: Language) -> RustBuffer {
     return FfiConverterTypeLanguage.lower(value)
 }
 
@@ -2602,7 +2624,7 @@ public func FfiConverterTypeNetwork_lift(_ buf: RustBuffer) throws -> Network {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeNetwork_lower(_ value: Network) -> RustBuffer {
+@Sendable public func FfiConverterTypeNetwork_lower(_ value: Network) -> RustBuffer {
     return FfiConverterTypeNetwork.lower(value)
 }
 
@@ -2668,7 +2690,7 @@ public func FfiConverterTypeSigningInputKind_lift(_ buf: RustBuffer) throws -> S
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSigningInputKind_lower(_ value: SigningInputKind) -> RustBuffer {
+@Sendable public func FfiConverterTypeSigningInputKind_lower(_ value: SigningInputKind) -> RustBuffer {
     return FfiConverterTypeSigningInputKind.lower(value)
 }
 
@@ -2741,7 +2763,7 @@ public func FfiConverterTypeTransactionOutputKind_lift(_ buf: RustBuffer) throws
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTransactionOutputKind_lower(_ value: TransactionOutputKind) -> RustBuffer {
+@Sendable public func FfiConverterTypeTransactionOutputKind_lower(_ value: TransactionOutputKind) -> RustBuffer {
     return FfiConverterTypeTransactionOutputKind.lower(value)
 }
 
@@ -2807,7 +2829,7 @@ public func FfiConverterTypeUtxoSignerKind_lift(_ buf: RustBuffer) throws -> Utx
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeUtxoSignerKind_lower(_ value: UtxoSignerKind) -> RustBuffer {
+@Sendable public func FfiConverterTypeUtxoSignerKind_lower(_ value: UtxoSignerKind) -> RustBuffer {
     return FfiConverterTypeUtxoSignerKind.lower(value)
 }
 
@@ -3419,76 +3441,76 @@ private enum InitializationResult {
 // the code inside is only computed once.
 private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 30
+    let bindings_contract_version = 33
     // Get the scaffolding contract version by calling the into the dylib
     let scaffolding_contract_version = ffi_easydoge_km_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 58952) {
+    if (uniffi_easydoge_km_ffi_checksum_func_account_xpriv_from_mnemonic() != 43533) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 62494) {
+    if (uniffi_easydoge_km_ffi_checksum_func_address_from_wif() != 55972) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 53844) {
+    if (uniffi_easydoge_km_ffi_checksum_func_combine_signing_envelopes() != 25471) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 31231) {
+    if (uniffi_easydoge_km_ffi_checksum_func_compose_and_sign_transaction() != 23095) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 14743) {
+    if (uniffi_easydoge_km_ffi_checksum_func_create_multisig_descriptor() != 24001) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 12406) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpriv() != 57481) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 15360) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_address_from_xpub() != 59098) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 24894) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpriv() != 27538) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 50174) {
+    if (uniffi_easydoge_km_ffi_checksum_func_derive_path_from_xpub() != 26217) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 6805) {
+    if (uniffi_easydoge_km_ffi_checksum_func_finalize_signing_envelope() != 38080) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 50715) {
+    if (uniffi_easydoge_km_ffi_checksum_func_generate_mnemonic() != 16372) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 62343) {
+    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpriv() != 58806) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 30445) {
+    if (uniffi_easydoge_km_ffi_checksum_func_inspect_xpub() != 53413) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 45842) {
+    if (uniffi_easydoge_km_ffi_checksum_func_mnemonic_to_seed_hex() != 13457) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_message() != 54472) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_message() != 62181) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 9304) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_p2pkh_transaction() != 26357) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 24006) {
+    if (uniffi_easydoge_km_ffi_checksum_func_sign_signing_envelope() != 14083) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_validate_address() != 61885) {
+    if (uniffi_easydoge_km_ffi_checksum_func_validate_address() != 65521) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 59929) {
+    if (uniffi_easydoge_km_ffi_checksum_func_validate_mnemonic() != 9623) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_verify_message() != 42166) {
+    if (uniffi_easydoge_km_ffi_checksum_func_verify_message() != 13870) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 13195) {
+    if (uniffi_easydoge_km_ffi_checksum_func_wif_from_xpriv() != 22146) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 15071) {
+    if (uniffi_easydoge_km_ffi_checksum_func_xpub_from_xpriv() != 27823) {
         return InitializationResult.apiChecksumMismatch
     }
 

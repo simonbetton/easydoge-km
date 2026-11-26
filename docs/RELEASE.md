@@ -60,7 +60,7 @@ To change the Gradle version:
 3. Update `distributionUrl` and `distributionSha256Sum` together in one commit. Do not run `gradle wrapper` and do not merge a Dependabot `gradle-wrapper` pull request: both replace the launcher with the stock script, which needs the uncommitted jar. Dependabot is configured to ignore that dependency.
 4. Run `./scripts/verify.sh`.
 
-The standalone Android library uses AGP 9.5.2 with Gradle 9.9.2 and AGP's built-in Kotlin support. The buildscript pins its Kotlin compiler to 2.4.21. Unit tests use the explicit Kotlin JUnit adapter. Use Java 17 and enable AGP's built-in Kotlin support without applying the separate Android Kotlin plugin. See the [AGP compatibility requirements](https://developer.android.com/build/releases/agp-9-5-0-release-notes) and [built-in Kotlin migration guide](https://developer.android.com/build/migrate-to-built-in-kotlin).
+The standalone Android library uses AGP 9.5.3 with Gradle 9.9.2 and AGP's built-in Kotlin support. The buildscript pins its Kotlin compiler to 2.4.21. Unit tests use the explicit Kotlin JUnit adapter. Use Java 17 and enable AGP's built-in Kotlin support without applying the separate Android Kotlin plugin. See the [AGP compatibility requirements](https://developer.android.com/build/releases/agp-9-5-0-release-notes) and [built-in Kotlin migration guide](https://developer.android.com/build/migrate-to-built-in-kotlin).
 
 Only the Gradle distribution is pinned by checksum. Gradle plugins and Maven libraries are pinned by exact version without checksum verification, `rust-toolchain.toml` tracks the stable channel, and CI actions are referenced by tag.
 
