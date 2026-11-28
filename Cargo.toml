@@ -20,7 +20,7 @@ base64 = "0.23"
 bip39 = { version = "3.0.0", features = ["all-languages", "rand", "zeroize"] }
 bitcoin = { version = "0.32.7-doge.0", package = "bitcoin-dogecoin", features = ["serde", "rand-std"] }
 bs58 = { version = "0.5", features = ["check"] }
-clap = { version = "4.6.9", features = ["derive"] }
+clap = { version = "4.6.10", features = ["derive"] }
 crossterm = "0.29"
 hex = "0.4"
 ratatui = "0.30.2"
@@ -29,5 +29,5 @@ serde_json = "1"
 sha2 = "0.11"
 thiserror = "2"
 unicode-normalization = "0.1"
-uniffi = "0.32.2"
+uniffi = "0.33.0"
 zeroize = { version = "1", features = ["derive"] }
